@@ -131,6 +131,7 @@ jobs:
           mv dist/FactorioPad-template.ipa dist/FactoriOS-template.ipa
 
       - name: Publish latest FactoriOS template
+        if: github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
