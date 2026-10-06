@@ -16,7 +16,6 @@ import urllib.request
 import urllib.parse
 import json
 import zipfile
-import io
 
 from package_ipa import MARKER, package_dmg
 
@@ -111,21 +110,24 @@ def download_upstream_template(cache, metadata, progress):
     return cache
 
 
+def branch_release_tag(branch):
+    safe = "".join(ch if ch.isalnum() or ch in "-._" else "-" for ch in branch)
+    return f"FactoriOS-branch-{safe}"
+
+
 def download_branch_template(branch, cache, metadata, progress):
-    progress(f"Finding the latest successful {branch} template build...")
-    query = urllib.parse.urlencode({"branch": branch, "status": "success", "per_page": 20})
-    api = f"https://api.github.com/repos/{REPO}/actions/workflows/build.yml/runs?{query}"
+    if branch == "main":
+        return download_release_template(cache, metadata, progress)
+
+    tag = branch_release_tag(branch)
+    progress(f"Checking the latest {branch} development template...")
+    api = f"https://api.github.com/repos/{REPO}/releases/tags/{urllib.parse.quote(tag, safe='')}"
     with urllib.request.urlopen(github_request(api), timeout=30) as response:
-        runs = json.load(response).get("workflow_runs", [])
-    run = next((item for item in runs if item.get("event") == "workflow_dispatch"), None)
-    if not run:
-        raise ValueError(f"No successful template build was found for branch {branch}.")
-    with urllib.request.urlopen(github_request(run["artifacts_url"]), timeout=30) as response:
-        artifacts = json.load(response).get("artifacts", [])
-    artifact = next((item for item in artifacts if item.get("name") == "FactoriOS-template" and not item.get("expired")), None)
-    if not artifact:
-        raise ValueError(f"The latest successful {branch} build has no available FactoriOS-template artifact.")
-    key = f"artifact:{artifact.get('id')}"
+        release = json.load(response)
+    asset = next((item for item in release.get("assets", []) if item.get("name") == TEMPLATE_NAME), None)
+    if not asset:
+        raise ValueError(f"No published development template was found for branch {branch}.")
+    key = f"branch-release:{asset.get('id')}"
     current = {}
     if metadata.is_file():
         try:
@@ -136,16 +138,13 @@ def download_branch_template(branch, cache, metadata, progress):
         progress(f"Using cached template from {branch}.")
         return cache
     progress(f"Downloading template from {branch}...")
-    with urllib.request.urlopen(github_request(artifact["archive_download_url"]), timeout=120) as response:
+    with urllib.request.urlopen(github_request(asset["browser_download_url"], "application/octet-stream"), timeout=120) as response:
         data = response.read()
-    with zipfile.ZipFile(io.BytesIO(data)) as archive:
-        names = [name for name in archive.namelist() if name.endswith(".ipa")]
-        if not names:
-            raise ValueError("The workflow artifact does not contain a template IPA.")
-        temporary = cache.with_suffix(".tmp")
-        temporary.write_bytes(archive.read(names[0]))
-        temporary.replace(cache)
-    metadata.write_text(json.dumps({"key": key, "branch": branch, "run_id": run.get("id")}), encoding="utf-8")
+    temporary = cache.with_suffix(".tmp")
+    temporary.write_bytes(data)
+    temporary.replace(cache)
+    metadata.write_text(json.dumps({"key": key, "branch": branch, "tag": tag,
+                                    "updated_at": asset.get("updated_at")}), encoding="utf-8")
     return cache
 
 
