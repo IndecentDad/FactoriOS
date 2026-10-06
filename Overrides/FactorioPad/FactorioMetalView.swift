@@ -511,7 +511,9 @@ final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
     private var hasAppeared = false
     private var lastStartupGeometry: String?
-    // Keep the native iPadOS pointer available for external-display and multitasking use.\n    // The legacy orange FactorioPad cursor is suppressed separately in the game view.\n    override var prefersPointerLocked: Bool { false }
+    // Keep the native iPadOS pointer available for external-display and multitasking use.
+    // The legacy orange FactorioPad cursor is suppressed separately in the game view.
+    override var prefersPointerLocked: Bool { false }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
