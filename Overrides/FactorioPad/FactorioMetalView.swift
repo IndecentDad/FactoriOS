@@ -3,7 +3,7 @@ import GameController
 import SwiftUI
 import UIKit
 
-final class FactorioHostUIView: UIView {
+final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     var presentationReady = false
     var inputEnabled = true {
         didSet {
@@ -69,6 +69,7 @@ final class FactorioHostUIView: UIView {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
+        addInteraction(UIPointerInteraction(delegate: self))
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -429,6 +430,15 @@ final class FactorioHostUIView: UIView {
 
     private func updatePointerLockPreference() {
         (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
+    }
+
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        // Hide only the native iPadOS pointer while it is over the Factorio surface.
+        // The pointer remains unlocked, so it can still cross to another display,
+        // while Factorio's own in-game crosshair remains the visible aiming cursor.
+        return .hidden()
     }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
