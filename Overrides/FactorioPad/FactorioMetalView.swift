@@ -511,9 +511,9 @@ final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
     private var hasAppeared = false
     private var lastStartupGeometry: String?
-    // FactoriOS captures the system pointer while the game is active so the
-    // Magic Keyboard/trackpad pointer does not sit over the Factorio surface.
-    override var prefersPointerLocked: Bool { gameView.inputEnabled }
+    // Keep the native iPadOS pointer available for external-display and multitasking use.
+    // The legacy orange FactorioPad cursor is suppressed separately in the game view.
+    override var prefersPointerLocked: Bool { false }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
