@@ -143,6 +143,24 @@ jobs:
           fi
           gh release upload "$TAG" FactorioPad/dist/FactoriOS-template.ipa --clobber
 
+      - name: Publish development branch template
+        if: github.ref != 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SAFE_BRANCH="$(printf '%s' "$GITHUB_REF_NAME" | sed 's/[^A-Za-z0-9._-]/-/g')"
+          TAG="FactoriOS-branch-$SAFE_BRANCH"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "FactoriOS branch: $GITHUB_REF_NAME" \
+              --notes "Development template for branch $GITHUB_REF_NAME." \
+              --prerelease
+          fi
+          gh release upload "$TAG" FactorioPad/dist/FactoriOS-template.ipa --clobber
+
       - uses: actions/upload-artifact@v4
         with:
           name: FactoriOS-template
