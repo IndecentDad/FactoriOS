@@ -1,0 +1,149 @@
+name: Build FactoriOS Template
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: xcode-27
+
+    steps:
+      - name: Check out FactoriOS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Check out current FactorioPad 2.0
+        uses: actions/checkout@v4
+        with:
+          repository: MyNameIsArko/FactorioPad
+          # FactorioPad v2.1: Documents-based app data and improved game-data import.
+          # Pin the release tag rather than following upstream main.
+          ref: v2.1
+          path: FactorioPad
+
+      - name: Apply FactoriOS branding
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ICON_SOURCE="$GITHUB_WORKSPACE/Overrides/icon.png"
+          ICON_DEST="$GITHUB_WORKSPACE/FactorioPad/FactorioPad/Assets.xcassets/AppIcon.appiconset/icon.png"
+          test -f "$ICON_SOURCE"
+          mkdir -p "$(dirname "$ICON_DEST")"
+          sips -z 1024 1024 "$ICON_SOURCE" --out "$ICON_DEST"
+
+          # Keep upstream 2.1 source intact. Only change user-facing branding.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName FactoriOS"             "$GITHUB_WORKSPACE/FactorioPad/FactorioPad/Info.plist" 2>/dev/null || true
+
+          # Preserve the controller declaration from the known-working FactoriOS build.
+          PLIST="$GITHUB_WORKSPACE/FactorioPad/FactorioPad/Info.plist"
+          /usr/libexec/PlistBuddy -c "Delete :GCSupportedGameControllers" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :GCSupportedGameControllers array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :GCSupportedGameControllers:0 dict" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :GCSupportedGameControllers:0:ProfileName string ExtendedGamepad" "$PLIST"
+
+      - name: Apply FactoriOS controller mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioPad/FactorioControlsView.swift" "$GITHUB_WORKSPACE/FactorioPad/FactorioPad/FactorioControlsView.swift"
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioPad/FactorioLoader.mm" "$GITHUB_WORKSPACE/FactorioPad/FactorioPad/FactorioLoader.mm"
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioPad/FactorioMetalView.swift" "$GITHUB_WORKSPACE/FactorioPad/FactorioPad/FactorioMetalView.swift"
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioPad/FactorioPadApp.swift" "$GITHUB_WORKSPACE/FactorioPad/FactorioPad/FactorioPadApp.swift"
+
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/FactorioControllerBridge.h" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/FactorioControllerBridge.h"
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/FactorioControllerBridge.m" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/FactorioControllerBridge.m"
+
+      - name: Prepare game-free Xcode placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Xcode's project copies these paths into the intermediate app, but the
+          # template packager removes them. Keep GitHub completely free of Factorio.
+          GUEST="$GITHUB_WORKSPACE/FactorioPad/Vendor/FactorioGuest.framework"
+          DATA="$GITHUB_WORKSPACE/FactorioPad/Vendor/FactorioData"
+          mkdir -p "$GUEST" "$DATA/base/scenarios/freeplay" "$DATA/core"
+          printf 'placeholder' > "$GUEST/FactorioGuest"
+          chmod +x "$GUEST/FactorioGuest"
+          cat > "$GUEST/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>FactorioGuest</string>
+            <key>CFBundleIdentifier</key><string>pl.adrian.FactorioPad.FactorioGuest</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>FactorioGuest</string>
+            <key>CFBundlePackageType</key><string>FMWK</string>
+            <key>CFBundleShortVersionString</key><string>0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>MinimumOSVersion</key><string>17.0</string>
+          </dict>
+          </plist>
+          PLIST
+          printf 'placeholder' > "$DATA/cacert.pem"
+          printf '{}\n' > "$DATA/base/info.json"
+          printf '{}\n' > "$DATA/core/info.json"
+          cp "$GITHUB_WORKSPACE/FactorioPad/Tools/freeplay_control.lua" "$DATA/base/scenarios/freeplay/control.lua"
+
+      - name: Build upstream 2.0 game-free template
+        working-directory: FactorioPad
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Keep upstream's build script in its original location so its ROOT
+          # calculation and all relative paths remain valid. We only suppress
+          # the macOS companion packaging that runs after the template exists.
+          # Build the wrapper directly. Upstream build_ipa.sh prepares a real
+          # FactorioGuest from a Mac installation first; the Companion owns that
+          # responsibility for FactoriOS, so GitHub only builds the game-free shell.
+          WORK="$(mktemp -d "$RUNNER_TEMP/factorios-template.XXXXXX")"
+          trap 'rm -rf "$WORK"' EXIT
+
+          xcodebuild \
+            -project "$PWD/FactorioPad.xcodeproj" \
+            -scheme FactorioPad \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$WORK/DerivedData" \
+            INFOPLIST_KEY_UIRequiresFullScreen=NO \
+            'INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad=UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight' \
+            CODE_SIGNING_ALLOWED=NO build
+
+          PRODUCT="$WORK/DerivedData/Build/Products/Release-iphoneos/FactorioPad.app"
+          test -f "$PRODUCT/FactorioPad"
+          mkdir -p "$WORK/Payload"
+          mv "$PRODUCT" "$WORK/Payload/FactorioPad.app"
+          rm -rf "$WORK/Payload/FactorioPad.app/FactorioData" \
+                 "$WORK/Payload/FactorioPad.app/Frameworks/FactorioGuest.framework"
+          /usr/bin/ditto --norsrc --noextattr -c -k --keepParent "$WORK/Payload" "$WORK/FactorioPad.ipa"
+          python3 Tools/package_ipa.py template "$WORK/FactorioPad.ipa" "$WORK/FactorioPad-template.ipa"
+          mkdir -p dist
+          mv "$WORK/FactorioPad-template.ipa" dist/FactorioPad-template.ipa
+
+          test -f dist/FactorioPad-template.ipa
+          mv dist/FactorioPad-template.ipa dist/FactoriOS-template.ipa
+
+      - name: Publish latest FactoriOS template
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="FactoriOS-latest"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "FactoriOS Latest" --notes "Latest FactoriOS build."
+          fi
+          gh release upload "$TAG" FactorioPad/dist/FactoriOS-template.ipa --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FactoriOS-template
+          path: FactorioPad/dist/FactoriOS-template.ipa
+          if-no-files-found: error

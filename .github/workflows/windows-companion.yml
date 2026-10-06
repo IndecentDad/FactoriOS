@@ -1,0 +1,103 @@
+name: Build FactoriOS Windows Companion
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out FactoriOS
+        uses: actions/checkout@v4
+
+      - name: Check out FactorioPad v2.1 tools
+        uses: actions/checkout@v4
+        with:
+          repository: MyNameIsArko/FactorioPad
+          ref: v2.1
+          path: FactorioPad
+
+      - name: Apply FactoriOS companion
+        shell: pwsh
+        run: |
+          Copy-Item "$env:GITHUB_WORKSPACE\Companion\companion.py" "$env:GITHUB_WORKSPACE\FactorioPad\Tools\companion.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\Companion\package_ipa.py" "$env:GITHUB_WORKSPACE\FactorioPad\Tools\package_ipa.py" -Force
+          Copy-Item "$env:GITHUB_WORKSPACE\Companion\build_companion.py" "$env:GITHUB_WORKSPACE\FactorioPad\Tools\build_companion.py" -Force
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install companion build tools
+        working-directory: FactorioPad
+        run: uv sync --locked
+
+      # The workflow token downloads the bundled template from this repository.
+      # No token or GitHub CLI is included in the distributed app.
+      - name: Download latest FactoriOS template
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-input
+          gh release download FactoriOS-latest \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "FactoriOS-template.ipa" \
+            --dir build-input \
+            --clobber
+
+      - name: Prepare bundled template
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f build-input/FactoriOS-template.ipa
+          mv build-input/FactoriOS-template.ipa build-input/FactorioPad-template.ipa
+
+      - name: Validate Companion Python
+        working-directory: FactorioPad
+        run: uv run --frozen python -m py_compile Tools/companion.py Tools/package_ipa.py Tools/build_companion.py
+
+      - name: Build Windows companion
+        working-directory: FactorioPad
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --frozen python Tools/build_companion.py \
+            --template ../build-input/FactorioPad-template.ipa \
+            --output dist/FactoriOS-Companion-Windows-x64.zip
+
+      - name: Publish Windows companion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload FactoriOS-latest \
+            FactorioPad/dist/FactoriOS-Companion-Windows-x64.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+      - name: Extract companion for workflow artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\artifact-output" | Out-Null
+          Expand-Archive -Path "$env:GITHUB_WORKSPACE\FactorioPad\dist\FactoriOS-Companion-Windows-x64.zip" -DestinationPath "$env:GITHUB_WORKSPACE\artifact-output" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FactoriOS-Companion-Windows-x64
+          path: artifact-output/*
+          if-no-files-found: error
+
