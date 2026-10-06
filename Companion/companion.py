@@ -13,8 +13,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
 import urllib.request
+import urllib.parse
 import json
 import zipfile
+import io
 
 from package_ipa import MARKER, package_dmg
 
@@ -31,6 +33,16 @@ def resource_root():
 def github_request(url, accept="application/vnd.github+json"):
     # Public template downloads never read credentials or invoke GitHub CLI.
     return urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "FactoriOS-Companion"})
+
+
+def github_branches():
+    api = f"https://api.github.com/repos/{REPO}/branches?per_page=100"
+    try:
+        with urllib.request.urlopen(github_request(api), timeout=30) as response:
+            branches = json.load(response)
+        return sorted({item.get("name", "").strip() for item in branches if item.get("name")})
+    except Exception:
+        return []
 
 
 def cache_root():
@@ -99,6 +111,44 @@ def download_upstream_template(cache, metadata, progress):
     return cache
 
 
+def download_branch_template(branch, cache, metadata, progress):
+    progress(f"Finding the latest successful {branch} template build...")
+    query = urllib.parse.urlencode({"branch": branch, "status": "success", "per_page": 20})
+    api = f"https://api.github.com/repos/{REPO}/actions/workflows/build.yml/runs?{query}"
+    with urllib.request.urlopen(github_request(api), timeout=30) as response:
+        runs = json.load(response).get("workflow_runs", [])
+    run = next((item for item in runs if item.get("event") == "workflow_dispatch"), None)
+    if not run:
+        raise ValueError(f"No successful template build was found for branch {branch}.")
+    with urllib.request.urlopen(github_request(run["artifacts_url"]), timeout=30) as response:
+        artifacts = json.load(response).get("artifacts", [])
+    artifact = next((item for item in artifacts if item.get("name") == "FactoriOS-template" and not item.get("expired")), None)
+    if not artifact:
+        raise ValueError(f"The latest successful {branch} build has no available FactoriOS-template artifact.")
+    key = f"artifact:{artifact.get('id')}"
+    current = {}
+    if metadata.is_file():
+        try:
+            current = json.loads(metadata.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            pass
+    if cache.is_file() and current.get("key") == key:
+        progress(f"Using cached template from {branch}.")
+        return cache
+    progress(f"Downloading template from {branch}...")
+    with urllib.request.urlopen(github_request(artifact["archive_download_url"]), timeout=120) as response:
+        data = response.read()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = [name for name in archive.namelist() if name.endswith(".ipa")]
+        if not names:
+            raise ValueError("The workflow artifact does not contain a template IPA.")
+        temporary = cache.with_suffix(".tmp")
+        temporary.write_bytes(archive.read(names[0]))
+        temporary.replace(cache)
+    metadata.write_text(json.dumps({"key": key, "branch": branch, "run_id": run.get("id")}), encoding="utf-8")
+    return cache
+
+
 def latest_template(resources, progress, source="FactoriOS-latest"):
     bundled = resources / "FactorioPad-template.ipa"
     safe_source = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in source)
@@ -110,7 +160,7 @@ def latest_template(resources, progress, source="FactoriOS-latest"):
             return download_release_template(cache, metadata, progress)
         if source == "FactorioPad-latest":
             return download_upstream_template(cache, metadata, progress)
-        raise ValueError("Choose FactoriOS-latest or FactorioPad-latest.")
+        return download_branch_template(source, cache, metadata, progress)
     except Exception as error:
         if cache.is_file():
             progress(f"Update check unavailable; using cached {source} template.")
@@ -163,7 +213,7 @@ class Companion:
         self.image = tk.StringVar(value=settings.get("dmg", ""))
         self.destination = tk.StringVar(value=settings.get("destination", str(Path.home() / "Downloads")))
         source = settings.get("source", "FactoriOS-latest")
-        self.source = tk.StringVar(value=source if source in ("FactoriOS-latest", "FactorioPad-latest") else "FactoriOS-latest")
+        self.source = tk.StringVar(value=source)
         self.include_data = tk.BooleanVar(value=True)
         self.status = tk.StringVar(value="Select your game download to start.")
         self.instructions = tk.StringVar(value="The app keeps your DMG unchanged. Keep your prepared IPA private because it contains your Factorio executable.")
@@ -206,6 +256,7 @@ class Companion:
         ttk.Button(frame, text="Sideloading help", command=lambda: webbrowser.open(
             "https://github.com/MyNameIsArko/FactorioPad#install-on-your-device")).grid(row=14, column=0, sticky="w", pady=8)
         window.after(100, self.poll)
+        threading.Thread(target=lambda: self.events.put(("branches", github_branches())), daemon=True).start()
 
     def load_settings(self):
         try:
@@ -264,6 +315,13 @@ class Companion:
                 break
             if kind == "progress":
                 self.status.set(value)
+                continue
+            if kind == "branches":
+                stable = ["FactoriOS-latest", "FactorioPad-latest"]
+                choices = stable + [branch for branch in value if branch not in stable]
+                self.source_box.configure(values=choices)
+                if self.source.get() not in choices:
+                    self.source.set("FactoriOS-latest")
                 continue
             self.busy = False
             self.progress.stop()
