@@ -3,7 +3,7 @@ import GameController
 import SwiftUI
 import UIKit
 
-final class FactorioHostUIView: UIView {
+final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     var presentationReady = false
     var inputEnabled = true {
         didSet {
@@ -30,6 +30,8 @@ final class FactorioHostUIView: UIView {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
+    private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
+    private var gameHidesNativePointer = false
     private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
@@ -68,6 +70,7 @@ final class FactorioHostUIView: UIView {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
+        addInteraction(nativePointerInteraction)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -137,6 +140,9 @@ final class FactorioHostUIView: UIView {
     private func setInputActive(_ applicationActive: Bool) {
         let active = applicationActive && inputEnabled
         inputActive = active
+        nativePointerInteraction.isEnabled = active
+        if !active { gameHidesNativePointer = false }
+        nativePointerInteraction.invalidate()
         primaryTouch = nil
         cursorDisplayLink?.isPaused = !active
         if !active {
@@ -219,9 +225,28 @@ final class FactorioHostUIView: UIView {
     }
 
     @objc private func updateControllerCursor() {
+        // Follow Factorio's SDL cursor state. Unknown state keeps the native pointer visible.
+        let hidesNativePointer = inputActive && FactorioMouseCursorVisibility() == 0
+        if gameHidesNativePointer != hidesNativePointer {
+            gameHidesNativePointer = hidesNativePointer
+            nativePointerInteraction.invalidate()
+        }
         // Unlocked iPad input uses the native pointer. Raw mouse input needs an overlay.
         controllerCursor.isHidden = !inputActive || !useRawMouse || pointerPosition == nil
         controllerCursor.frame.origin = pointerPosition ?? .zero
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        regionFor request: UIPointerRegionRequest,
+        defaultRegion: UIPointerRegion) -> UIPointerRegion? {
+        guard inputActive else { return nil }
+        // Visibility changes are confined to this view, never the iPad or other display.
+        return UIPointerRegion(rect: bounds, identifier: nil)
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        return inputActive && gameHidesNativePointer ? .hidden() : nil
     }
 
     @objc private func toggleKeyboard() {
