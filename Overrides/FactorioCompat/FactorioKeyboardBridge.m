@@ -3,6 +3,20 @@
 #import <dlfcn.h>
 #import <stdint.h>
 #import <string.h>
+#import <UIKit/UIKit.h>
+
+// SDL2 Cocoa stores its retained NSCursor in driverdata.
+typedef struct FPSDLCursor {
+    struct FPSDLCursor *next;
+    void *driverdata;
+} FPSDLCursor;
+typedef FPSDLCursor *(*FPSDLGetCursorFn)(void);
+static FPSDLGetCursorFn gGetCursor = NULL;
+
+@protocol FPCursorAppearance
+- (UIImage *)fpCursorImage;
+- (CGPoint)fpCursorHotSpot;
+@end
 
 
 // ============================================================
@@ -338,11 +352,13 @@ FactorioKeyboardBridgeSetGuestHandle(
             ) : NULL);
         // Optional: cursor support must not prevent otherwise working input.
         gShowCursor = (FPSDLShowCursorFn)(handle ? dlsym(handle, "SDL_ShowCursor") : NULL);
+        gGetCursor = (FPSDLGetCursorFn)(handle ? dlsym(handle, "SDL_GetCursor") : NULL);
         BOOL ready = gPushEvent && gGetKeyboardFocus && gGetWindowID && gGetTicks && gSendKeyboardKey && gSetModState;
         if (!ready) {
             // Do not leave a partially initialized bridge available to other input sources.
             gPushEvent = NULL;
             gShowCursor = NULL;
+            gGetCursor = NULL;
             gSendKeyboardKey = NULL;
             gSetModState = NULL;
             if (handle) NSLog(@"[FactorioPad] The guest is missing required SDL input functions.");
@@ -352,6 +368,22 @@ FactorioKeyboardBridgeSetGuestHandle(
         gSyntheticMouseButtons = 0;
         memset(gKeySources, 0, sizeof(gKeySources));
         return ready;
+    }
+}
+
+NSDictionary *FactorioMouseCursorAppearance(void)
+{
+    @synchronized (FPInputLock()) {
+        if (!gGetCursor) { return nil; }
+        FPSDLCursor *cursor = gGetCursor();
+        if (!cursor || !cursor->driverdata) { return nil; }
+        id object = (__bridge id)cursor->driverdata;
+        if (![object respondsToSelector:@selector(fpCursorImage)] ||
+            ![object respondsToSelector:@selector(fpCursorHotSpot)]) { return nil; }
+        UIImage *image = [(id<FPCursorAppearance>)object fpCursorImage];
+        if (!image) { return nil; }
+        CGPoint hotspot = [(id<FPCursorAppearance>)object fpCursorHotSpot];
+        return @{@"image": image, @"hotspot": [NSValue valueWithCGPoint:hotspot]};
     }
 }
 
