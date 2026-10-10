@@ -353,6 +353,8 @@ FactorioKeyboardBridgeSetGuestHandle(
         // Optional: cursor support must not prevent otherwise working input.
         gShowCursor = (FPSDLShowCursorFn)(handle ? dlsym(handle, "SDL_ShowCursor") : NULL);
         gGetCursor = (FPSDLGetCursorFn)(handle ? dlsym(handle, "SDL_GetCursor") : NULL);
+        NSLog(@"[FactoriOSCursor] diagnostics-v1: SDL_GetCursor=%@ SDL_ShowCursor=%@",
+            gGetCursor ? @"available" : @"missing", gShowCursor ? @"available" : @"missing");
         BOOL ready = gPushEvent && gGetKeyboardFocus && gGetWindowID && gGetTicks && gSendKeyboardKey && gSetModState;
         if (!ready) {
             // Do not leave a partially initialized bridge available to other input sources.
@@ -371,17 +373,41 @@ FactorioKeyboardBridgeSetGuestHandle(
     }
 }
 
+static void FPLogCursorStatus(NSString *status)
+{
+    static NSString *lastStatus = nil;
+    if (![lastStatus isEqualToString:status]) {
+        lastStatus = [status copy];
+        NSLog(@"[FactoriOSCursor] %@", status);
+    }
+}
+
 NSDictionary *FactorioMouseCursorAppearance(void)
 {
     @synchronized (FPInputLock()) {
-        if (!gGetCursor) { return nil; }
+        if (!gGetCursor) {
+            FPLogCursorStatus(@"Native fallback: SDL_GetCursor is unavailable.");
+            return nil;
+        }
         FPSDLCursor *cursor = gGetCursor();
-        if (!cursor || !cursor->driverdata) { return nil; }
+        if (!cursor || !cursor->driverdata) {
+            FPLogCursorStatus(@"Native fallback: SDL has no selected cursor/driverdata.");
+            return nil;
+        }
         id object = (__bridge id)cursor->driverdata;
         if (![object respondsToSelector:@selector(fpCursorImage)] ||
-            ![object respondsToSelector:@selector(fpCursorHotSpot)]) { return nil; }
+            ![object respondsToSelector:@selector(fpCursorHotSpot)]) {
+            FPLogCursorStatus([NSString stringWithFormat:
+                @"Native fallback: selected class %@ has no cursor-image accessors.", NSStringFromClass([object class])]);
+            return nil;
+        }
         UIImage *image = [(id<FPCursorAppearance>)object fpCursorImage];
-        if (!image) { return nil; }
+        if (!image) {
+            FPLogCursorStatus([NSString stringWithFormat:
+                @"Native fallback: selected %@ has no custom image (possibly a system cursor).", NSStringFromClass([object class])]);
+            return nil;
+        }
+        FPLogCursorStatus(@"Selected SDL cursor has a custom image.");
         CGPoint hotspot = [(id<FPCursorAppearance>)object fpCursorHotSpot];
         return @{@"image": image, @"hotspot": [NSValue valueWithCGPoint:hotspot]};
     }
