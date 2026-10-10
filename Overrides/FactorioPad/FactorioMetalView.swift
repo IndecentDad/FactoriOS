@@ -31,6 +31,13 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
+    private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
+    private var lastPointerUseDefaultControls: Bool?
+    private var useDefaultControls: Bool {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "FactoriOSUseDefaultControls") == nil
+            ? true : defaults.bool(forKey: "FactoriOSUseDefaultControls")
+    }
     private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
@@ -69,7 +76,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
-        addInteraction(UIPointerInteraction(delegate: self))
+        addInteraction(nativePointerInteraction)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -223,9 +230,12 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func updateControllerCursor() {
-        let defaults = UserDefaults.standard
-        let useDefaultControls = defaults.object(forKey: "FactoriOSUseDefaultControls") == nil
-            ? true : defaults.bool(forKey: "FactoriOSUseDefaultControls")
+        let useDefaultControls = self.useDefaultControls
+        if lastPointerUseDefaultControls != useDefaultControls {
+            lastPointerUseDefaultControls = useDefaultControls
+            // Re-evaluate the native pointer even when the trackpad has not moved.
+            nativePointerInteraction.invalidate()
+        }
 
         if useDefaultControls {
             // Native Factorio/SDL input owns cursor presentation in Default Controls.
@@ -435,10 +445,9 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
     func pointerInteraction(_ interaction: UIPointerInteraction,
         styleFor region: UIPointerRegion) -> UIPointerStyle? {
-        // Hide only the native iPadOS pointer while it is over the Factorio surface.
-        // The pointer remains unlocked, so it can still cross to another display,
-        // while Factorio's own in-game crosshair remains the visible aiming cursor.
-        return .hidden()
+        // FactorioPad controls use the native pointer for unlocked mouse/trackpad input.
+        // Default Controls retain the external-display cursor suppression.
+        return useDefaultControls ? .hidden() : nil
     }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
