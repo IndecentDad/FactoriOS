@@ -59,6 +59,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/FactorioControllerBridge.m" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/FactorioControllerBridge.m"
           cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/FactorioKeyboardBridge.h" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/FactorioKeyboardBridge.h"
           cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/FactorioKeyboardBridge.m" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/FactorioKeyboardBridge.m"
+          cp "$GITHUB_WORKSPACE/Overrides/FactorioCompat/AppKitShims.m" "$GITHUB_WORKSPACE/FactorioPad/FactorioCompat/AppKitShims.m"
 
       - name: Prepare game-free Xcode placeholders
         shell: bash
