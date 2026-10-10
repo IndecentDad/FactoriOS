@@ -23,6 +23,9 @@ FactorioKeyboardTab(void);
 // SDL cursor visibility: 0 hidden, 1 visible, -1 unavailable. Query only.
 FOUNDATION_EXPORT int FactorioMouseCursorVisibility(void);
 
+// Current custom SDL mouse cursor image/hotspot, or nil for native-pointer fallback.
+FOUNDATION_EXPORT NSDictionary * _Nullable FactorioMouseCursorAppearance(void);
+
 NS_ASSUME_NONNULL_END
 
 #include <stdint.h>
