@@ -18,6 +18,4 @@ Follow the [FactorioPad installation steps](https://github.com/MyNameIsArko/Fact
 - Updated icon
 - **Adds external display support**
 - **Adds native controller support**
- - Hold keyboard icon on bottom right to toggle between FactorioPad controls and native controller (default)
- - Changing controller input here requires restarting the app to take effect
-- Save-Sync folder is also assigned (and can be updated) in this sub-menu
+- Hold keyboard icon on bottom right to add/change Save Sync folder
