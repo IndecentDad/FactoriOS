@@ -91,7 +91,8 @@ jobs:
           printf 'placeholder' > "$DATA/cacert.pem"
           printf '{}\n' > "$DATA/base/info.json"
           printf '{}\n' > "$DATA/core/info.json"
-          cp "$GITHUB_WORKSPACE/FactorioPad/Tools/freeplay_control.lua" "$DATA/base/scenarios/freeplay/control.lua"
+          # Game-free placeholder only; preserve purchased freeplay scripts during packaging.
+          touch "$DATA/base/scenarios/freeplay/control.lua"
 
       - name: Build upstream 2.0 game-free template
         working-directory: FactorioPad
