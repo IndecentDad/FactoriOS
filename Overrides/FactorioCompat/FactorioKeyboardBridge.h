@@ -70,3 +70,6 @@ void FactorioMouseWheel(
     int32_t x,
     int32_t y
 );
+
+// Pointer left the game view; does not change keyboard focus.
+void FactorioMouseLeave(void);
