@@ -338,6 +338,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         if !mouseButtons.isEmpty {
             updateMouseButtons([], at: pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY))
         }
+        FactorioMouseLeave()
         pointerPosition = nil
         guestMouseCursor.isHidden = true
         scrollRemainder = .zero
@@ -469,6 +470,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
         guard inputActive, !useRawMouse else { return }
         if gesture.state == .ended || gesture.state == .cancelled {
+            FactorioMouseLeave()
             pointerPosition = nil
             guestMouseCursor.isHidden = true
             updateControllerCursor()
