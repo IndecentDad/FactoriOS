@@ -161,8 +161,6 @@ def package(template, app, output, include_data=True):
         patch(binary)
         if include_data:
             shutil.copytree(data_root, result / "FactorioData", ignore=shutil.ignore_patterns(*PRIVATE_FILES))
-            shutil.copyfile(pathlib.Path(__file__).with_name("freeplay_control.lua"),
-                            result / "FactorioData/base/scenarios/freeplay/control.lua")
         with zipfile.ZipFile(template) as source, zipfile.ZipFile(result / "FactorioPad.ipa", "w", zipfile.ZIP_DEFLATED) as target:
             prefix = app_prefix(source)
             marker = json.loads(source.read(prefix + MARKER))

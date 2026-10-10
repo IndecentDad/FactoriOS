@@ -220,21 +220,7 @@ static NSString *FactorioDefaultConfig(
          "render-in-native-resolution=true\n"
          "high-quality-animations=true\n"
          "texture-compression-level=high-quality\n"
-         "\n"
-         "[interface]\n"
-         "ui-scale-mode=manual-pixels\n"
-         "custom-ui-scale=1.5\n"
-         "pick-ghost-cursor=true\n"
-         "tooltip-delay=0.1\n"
-         "active-quick-bars=1\n"
-         "\n"
-         "[input]\n"
-         "input-method=keyboard-and-mouse\n"
-         "heading-vehicle-driving=true\n"
-         "\n"
-         "[controller]\n"
-         "icons=xbox\n"
-         "button-layout=western\n",
+         "\n",
         readDataPath,
         writeDataPath];
 }
@@ -622,8 +608,6 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         config = FactorioDefaultConfig(readDataPath, root);
     } else {
         config = FactorioUpdateConfigPaths(config, readDataPath, root);
-        config = FactorioApplyConfigSection(config, @"[input]",
-            @[@"heading-vehicle-driving=true"], YES);
     }
 
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
