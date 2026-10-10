@@ -3,7 +3,7 @@ import GameController
 import SwiftUI
 import UIKit
 
-final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
+final class FactorioHostUIView: UIView {
     var presentationReady = false
     var inputEnabled = true {
         didSet {
@@ -18,7 +18,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
             || window?.windowScene?.pointerLockState?.isLocked == true)
     }
     private var hasPhysicalKeyboard: Bool { GCKeyboard.coalesced != nil }
-    private var hasGamepad: Bool { GCController.controllers().contains { $0.extendedGamepad != nil } }
     private static var factorioStarted = false
     private var pendingStartSize: CGSize?
     private var primaryTouch: UITouch?
@@ -31,13 +30,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
-    private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
-    private var lastPointerUseDefaultControls: Bool?
-    private var useDefaultControls: Bool {
-        let defaults = UserDefaults.standard
-        return defaults.object(forKey: "FactoriOSUseDefaultControls") == nil
-            ? true : defaults.bool(forKey: "FactoriOSUseDefaultControls")
-    }
     private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
@@ -64,9 +56,9 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         keyboardButton.backgroundColor = UIColor.black.withAlphaComponent(0.4)
         keyboardButton.layer.cornerRadius = 22
         keyboardButton.accessibilityLabel = "Show keyboard"
-        keyboardButton.accessibilityHint = "Touch and hold for controller controls."
+        keyboardButton.accessibilityHint = "Touch and hold for FactoriOS settings."
         keyboardButton.accessibilityCustomActions = [UIAccessibilityCustomAction(
-            name: "Show controller controls", target: self, selector: #selector(showControlsWithAccessibility))]
+            name: "Show FactoriOS settings", target: self, selector: #selector(showControlsWithAccessibility))]
         keyboardButton.addTarget(self, action: #selector(toggleKeyboard), for: .touchUpInside)
         let controlsPress = UILongPressGestureRecognizer(target: self, action: #selector(showControls))
         controlsPress.minimumPressDuration = 0.5
@@ -76,7 +68,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
-        addInteraction(nativePointerInteraction)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -114,7 +105,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
                 self.releaseMouseInput()
             } else if self.useRawMouse {
                 self.updateMouseButtons(UIEvent.ButtonMask(rawValue: buttons),
-                    at: self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition())
+                    at: self.pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY))
             }
             self.updatePointerLockPreference()
             for replacement in GCMouse.mice() { self.installMouse(replacement) }
@@ -148,7 +139,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         inputActive = active
         primaryTouch = nil
         cursorDisplayLink?.isPaused = !active
-        FactorioControllerBridgeSetActive(active)
         if !active {
             releasePhysicalInput()
             FactorioTouchCancel()
@@ -200,7 +190,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
                 }
             }
         }
-        FactorioControllerBridgeSetViewportSize(bounds.width, bounds.height)
         FactorioTouchUpdateWindowSize()
     }
 
@@ -230,37 +219,24 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func updateControllerCursor() {
-        let useDefaultControls = self.useDefaultControls
-        if lastPointerUseDefaultControls != useDefaultControls {
-            lastPointerUseDefaultControls = useDefaultControls
-            // Re-evaluate the native pointer even when the trackpad has not moved.
-            nativePointerInteraction.invalidate()
-        }
-
-        if useDefaultControls {
-            // Native Factorio/SDL input owns cursor presentation in Default Controls.
-            // Never show the legacy orange FactorioPad cursor in this mode.
-            controllerCursor.isHidden = true
-        } else {
-            controllerCursor.isHidden = !inputActive || (!(hasPhysicalMouse && useRawMouse)
-                && !GCController.controllers().contains { $0.extendedGamepad != nil })
-        }
-        controllerCursor.frame.origin = FactorioControllerBridgeGetCursorPosition()
+        // Unlocked iPad input uses the native pointer. Raw mouse input needs an overlay.
+        controllerCursor.isHidden = !inputActive || !useRawMouse || pointerPosition == nil
+        controllerCursor.frame.origin = pointerPosition ?? .zero
     }
 
     @objc private func toggleKeyboard() {
-        guard !hasPhysicalKeyboard || hasGamepad else { return }
+        guard !hasPhysicalKeyboard else { return }
         onScreenKeyboard.isHidden.toggle()
         updateKeyboardButton()
         keyboardButton.accessibilityLabel = onScreenKeyboard.isHidden ? "Show keyboard" : "Hide keyboard"
     }
 
     private func updateKeyboardButton() {
-        if hasPhysicalKeyboard && !hasGamepad {
+        if hasPhysicalKeyboard {
             onScreenKeyboard.isHidden = true
             onScreenKeyboard.reset()
         }
-        keyboardButton.isHidden = (hasPhysicalKeyboard && !hasGamepad) || !onScreenKeyboard.isHidden
+        keyboardButton.isHidden = (hasPhysicalKeyboard) || !onScreenKeyboard.isHidden
     }
 
     @objc private func showControls(_ gesture: UILongPressGestureRecognizer) {
@@ -289,7 +265,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
     private func updateTouch(_ touch: UITouch, send: (CGFloat, CGFloat) -> Void) {
         let point = touch.location(in: self)
-        FactorioControllerBridgeSetCursorPosition(point.x, point.y)
         send(point.x, point.y)
     }
 
@@ -313,7 +288,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     private func releaseMouseInput() {
         mouseButtonSources.removeAll()
         if !mouseButtons.isEmpty {
-            updateMouseButtons([], at: pointerPosition ?? FactorioControllerBridgeGetCursorPosition())
+            updateMouseButtons([], at: pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY))
         }
         pointerPosition = nil
         scrollRemainder = .zero
@@ -375,7 +350,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
             y: min(max(point.y, 0), max(bounds.height - 1, 0)))
         let old = pointerPosition ?? point
         pointerPosition = point
-        FactorioControllerBridgeSetCursorPosition(point.x, point.y)
         FactorioMouseMove(Int32(point.x.rounded()), Int32(point.y.rounded()),
             Int32(point.x.rounded() - old.x.rounded()), Int32(point.y.rounded() - old.y.rounded()))
     }
@@ -405,7 +379,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         mouse.handlerQueue = .main
         input.mouseMovedHandler = { [weak self] _, dx, dy in
             guard let self, self.inputActive, self.useRawMouse else { return }
-            let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+            let origin = self.pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY)
             let speed: CGFloat = 1.0
             self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
                 y: origin.y - CGFloat(dy) * speed))
@@ -433,7 +407,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
     private func mouseButton(_ button: UIEvent.ButtonMask, pressed: Bool, from device: ObjectIdentifier) {
         guard inputActive, useRawMouse, mice.contains(where: { ObjectIdentifier($0) == device }) else { return }
-        let point = pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+        let point = pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY)
         let buttons = mouseButtonSources.set(button.rawValue, pressed: pressed, for: device)
         updateMouseButtons(UIEvent.ButtonMask(rawValue: buttons), at: point)
     }
@@ -442,13 +416,6 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
     }
 
-
-    func pointerInteraction(_ interaction: UIPointerInteraction,
-        styleFor region: UIPointerRegion) -> UIPointerStyle? {
-        // FactorioPad controls use the native pointer for unlocked mouse/trackpad input.
-        // Default Controls retain the external-display cursor suppression.
-        return useDefaultControls ? .hidden() : nil
-    }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
         guard inputActive, !useRawMouse,
