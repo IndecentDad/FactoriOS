@@ -3864,6 +3864,9 @@ static NSCursor *gFactorioCurrentCursor = nil;
                 scale:MAX(scale, 1) orientation:UIImageOrientationUp];
         }
         _fpCursorHotSpot = hotSpot;
+        NSLog(@"[FactoriOSCursor] Custom NSCursor created: logical=%.0fx%.0f image=%@ size=%.0fx%.0f hotspot=%.1f,%.1f",
+            logicalSize.width, logicalSize.height, _fpCursorImage ? @"available" : @"missing",
+            _fpCursorImage.size.width, _fpCursorImage.size.height, hotSpot.x, hotSpot.y);
     }
     return self;
 }
