@@ -3770,11 +3770,13 @@ static NSInteger FactorioNextWindowNumber = 1;
                       hotSpot:(CGPoint)hotSpot;
 
 + (NSCursor *)currentCursor;
++ (NSCursor *)fpSelectedCursor;
 
 @end
 
 static NSCursor *gFactorioCurrentCursor = nil;
 static NSMutableArray<NSCursor *> *gFactorioCursorStack = nil;
+static BOOL gFactorioHasExplicitCursor = NO;
 
 @implementation NSCursor
 
@@ -3846,6 +3848,7 @@ static NSMutableArray<NSCursor *> *gFactorioCursorStack = nil;
                 _fpCursorImage ? @"available" : @"system");
         }
         gFactorioCurrentCursor = self;
+        gFactorioHasExplicitCursor = YES;
     }
 }
 
@@ -3893,6 +3896,13 @@ static NSMutableArray<NSCursor *> *gFactorioCursorStack = nil;
 
 - (UIImage *)fpCursorImage { return _fpCursorImage; }
 - (CGPoint)fpCursorHotSpot { return _fpCursorHotSpot; }
+
++ (NSCursor *)fpSelectedCursor
+{
+    @synchronized ([NSCursor class]) {
+        return gFactorioHasExplicitCursor ? gFactorioCurrentCursor : nil;
+    }
+}
 
 + (NSCursor *)currentCursor
 {
