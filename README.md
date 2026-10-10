@@ -1,6 +1,6 @@
 # FactoriOS
 
-A fork of [FactorioPad](https://github.com/MyNameIsArko/FactorioPad/releases), with my own personal changes/improvements
+A fork of [FactorioPad](https://github.com/MyNameIsArko/FactorioPad/releases) (v2.1)
 
 The Factorio game itself is **not stored in this repository** and still requires compiling your own copy
 
@@ -9,13 +9,14 @@ Follow the [FactorioPad installation steps](https://github.com/MyNameIsArko/Fact
  - I can add a Mac/Linux version on request
 
 ## Changes/Revisions | Windows Compiler app
-- Uses the FactoriOS template instead of FactorioPad
-- FactorioData folder is toggled ON by default for initial installation; turn it off when updating only the app
-- Initial run and installation requires FactorioData folder, app-only updates need only the new IPA; updating the Factorio game version also requires matching game data
+- Adds source selection (FactorioPad/FactoriOS/public branches)
+- Adds toggle to update ipa only (Skip FactorioData folder to speed up compiling)
+- Initial run and installation requires FactorioData folder, app-only updates need only the new IPA
 
 ## Changes/Revisions | FactorioPad > FactoriOS
 - Includes the root FactorioPad v2.1 features and file structure
 - Updated icon
 - **Adds external display support**
 - **Adds native controller support**
+- Reverts many changes back to native
 - Hold keyboard icon on bottom right to add/change Save Sync folder
