@@ -1,6 +1,5 @@
 #import "FactorioLoader.h"
 
-#import "FactorioControllerBridge.h"
 #import "FactorioKeyboardBridge.h"
 
 #import <Foundation/Foundation.h>
@@ -204,17 +203,6 @@ __attribute__((constructor)) static void FactorioBeginStartupLogging(void)
     }
 }
 #endif
-
-static NSArray<NSString *> *FactorioControllerBindings(void)
-{
-    return @[
-        @"pick-items=SHIFT + E", @"drop-cursor=SHIFT + Q", @"show-info=CONTROL + SPACE",
-        @"toggle-driving=CONTROL + E", @"copy=CONTROL + Q", @"cut=CONTROL + SHIFT + Q",
-        @"paste=CONTROL + R", @"undo=CONTROL + SHIFT + R", @"redo=CONTROL + SHIFT + SPACE",
-        @"open-technology-gui=SHIFT + M", @"production-statistics=CONTROL + M",
-        @"toggle-blueprint-library=CONTROL + SHIFT + M"
-    ];
-}
 
 static NSString *FactorioDefaultConfig(
     NSString *readDataPath,
@@ -636,8 +624,6 @@ static NSString *FactorioPrepareWritableData(NSString *readDataPath)
         config = FactorioUpdateConfigPaths(config, readDataPath, root);
         config = FactorioApplyConfigSection(config, @"[input]",
             @[@"heading-vehicle-driving=true"], YES);
-        config = FactorioApplyConfigSection(config, @"[controls]",
-            FactorioControllerBindings(), NO);
     }
 
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -812,14 +798,7 @@ static void *FactorioOpenFramework(NSString *name, int flags)
         FactorioReportError(@"This Factorio game file does not provide compatible input functions.");
         return;
     }
-    BOOL useDefaultControls = [[NSUserDefaults standardUserDefaults] objectForKey:@"FactoriOSUseDefaultControls"] == nil
-        ? YES : [[NSUserDefaults standardUserDefaults] boolForKey:@"FactoriOSUseDefaultControls"];
-    if (!useDefaultControls) {
-        FactorioControllerBridgeStart();
-        FactorioControllerBridgeSetViewportSize(windowSize.width, windowSize.height);
-    }
-    FactorioLog(useDefaultControls ? @"Using Factorio native controller controls"
-                                  : @"Using FactorioPad controller mappings");
+    FactorioLog(@"Using Factorio native keyboard, mouse, and controller controls");
 
     typedef int (*FactorioMainFunction)(int, char **);
     dlerror();
@@ -844,9 +823,6 @@ static void *FactorioOpenFramework(NSString *name, int flags)
         @"--fullscreen=false",
         @"--window-size", windowSizeArgument
     ] mutableCopy];
-    if (!useDefaultControls) {
-        [arguments addObject:@"--nogamepad"];
-    }
     [arguments addObject:@"--single-thread-loading"];
 
     NSThread *thread = [[NSThread alloc] initWithBlock:^{
@@ -886,7 +862,6 @@ static void *FactorioOpenFramework(NSString *name, int flags)
             free(argumentValues);
 
             FactorioLog([NSString stringWithFormat:@"Factorio stopped with status %d", result]);
-            FactorioControllerBridgeSetActive(NO);
             FactorioReportError(result == 0 ? @"Factorio stopped. Close and reopen the app to play again."
                 : @"Factorio stopped because of an error. Close and reopen the app to try again.");
         }
