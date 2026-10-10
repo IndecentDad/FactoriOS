@@ -3774,6 +3774,7 @@ static NSInteger FactorioNextWindowNumber = 1;
 @end
 
 static NSCursor *gFactorioCurrentCursor = nil;
+static NSMutableArray<NSCursor *> *gFactorioCursorStack = nil;
 
 @implementation NSCursor
 
@@ -3839,16 +3840,35 @@ static NSCursor *gFactorioCurrentCursor = nil;
 
 - (void)set
 {
+    @synchronized ([NSCursor class]) {
+        if (gFactorioCurrentCursor != self) {
+            NSLog(@"[FactoriOSCursor] Cocoa selected cursor: image=%@",
+                _fpCursorImage ? @"available" : @"system");
+        }
+        gFactorioCurrentCursor = self;
+    }
 }
 
 
 - (void)push
 {
+    @synchronized ([NSCursor class]) {
+        if (!gFactorioCursorStack) gFactorioCursorStack = [NSMutableArray new];
+        [gFactorioCursorStack addObject:[NSCursor currentCursor]];
+        [self set];
+    }
 }
 
 
 + (void)pop
 {
+    @synchronized ([NSCursor class]) {
+        NSCursor *previous = gFactorioCursorStack.lastObject;
+        if (previous) {
+            [gFactorioCursorStack removeLastObject];
+            [previous set];
+        }
+    }
 }
 
 - (instancetype)initWithImage:(NSImage *)image
@@ -3876,11 +3896,12 @@ static NSCursor *gFactorioCurrentCursor = nil;
 
 + (NSCursor *)currentCursor
 {
-    if (!gFactorioCurrentCursor) {
-        gFactorioCurrentCursor = [self arrowCursor];
+    @synchronized ([NSCursor class]) {
+        if (!gFactorioCurrentCursor) {
+            gFactorioCurrentCursor = [self arrowCursor];
+        }
+        return gFactorioCurrentCursor;
     }
-
-    return gFactorioCurrentCursor;
 }
 
 @end
