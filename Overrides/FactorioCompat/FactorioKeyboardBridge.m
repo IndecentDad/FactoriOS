@@ -12,6 +12,18 @@ typedef struct FPSDLCursor {
 } FPSDLCursor;
 typedef FPSDLCursor *(*FPSDLGetCursorFn)(void);
 static FPSDLGetCursorFn gGetCursor = NULL;
+// SDL2 platform input functions update state as well as queueing events.
+typedef int (*FPSDLSendMouseMotionFn)(void *, uint32_t, int, int, int);
+typedef int (*FPSDLSendMouseButtonFn)(void *, uint32_t, uint8_t, uint8_t);
+typedef void (*FPSDLSetMouseFocusFn)(void *);
+typedef void *(*FPSDLGetMouseFocusFn)(void);
+typedef uint32_t (*FPSDLGetMouseStateFn)(int *, int *);
+static FPSDLSendMouseMotionFn gSendMouseMotion = NULL;
+static FPSDLSendMouseButtonFn gSendMouseButton = NULL;
+static FPSDLSetMouseFocusFn gSetMouseFocus = NULL;
+static FPSDLGetMouseFocusFn gGetMouseFocus = NULL;
+static FPSDLGetMouseStateFn gGetMouseState = NULL;
+static BOOL gLoggedMouseState = NO;
 
 @protocol FPCursorAppearance
 + (id)fpSelectedCursor;
@@ -356,10 +368,27 @@ FactorioKeyboardBridgeSetGuestHandle(
         gGetCursor = (FPSDLGetCursorFn)(handle ? dlsym(handle, "SDL_GetCursor") : NULL);
         NSLog(@"[FactoriOSCursor] diagnostics-v1: SDL_GetCursor=%@ SDL_ShowCursor=%@",
             gGetCursor ? @"available" : @"missing", gShowCursor ? @"available" : @"missing");
+        gSendMouseMotion = (FPSDLSendMouseMotionFn)(handle ? dlsym(handle, "SDL_SendMouseMotion") : NULL);
+        gSendMouseButton = (FPSDLSendMouseButtonFn)(handle ? dlsym(handle, "SDL_SendMouseButton") : NULL);
+        gSetMouseFocus = (FPSDLSetMouseFocusFn)(handle ? dlsym(handle, "SDL_SetMouseFocus") : NULL);
+        gGetMouseFocus = (FPSDLGetMouseFocusFn)(handle ? dlsym(handle, "SDL_GetMouseFocus") : NULL);
+        gGetMouseState = (FPSDLGetMouseStateFn)(handle ? dlsym(handle, "SDL_GetMouseState") : NULL);
+        // Use the stateful path only as a complete pair; mixed button paths lose state.
+        if (!gSendMouseMotion || !gSendMouseButton || !gSetMouseFocus) {
+            gSendMouseMotion = NULL;
+            gSendMouseButton = NULL;
+            gSetMouseFocus = NULL;
+        }
+        gLoggedMouseState = NO;
+        NSLog(@"[FactoriOSCursor] mouse-state-v2: stateful input=%@",
+            gSendMouseMotion ? @"available" : @"missing; event fallback");
         BOOL ready = gPushEvent && gGetKeyboardFocus && gGetWindowID && gGetTicks && gSendKeyboardKey && gSetModState;
         if (!ready) {
             // Do not leave a partially initialized bridge available to other input sources.
             gPushEvent = NULL;
+            gSendMouseMotion = NULL;
+            gSendMouseButton = NULL;
+            gSetMouseFocus = NULL;
             gShowCursor = NULL;
             gGetCursor = NULL;
             gSendKeyboardKey = NULL;
@@ -755,6 +784,22 @@ FactorioMouseMove(
             return;
         }
 
+        void *window = gGetKeyboardFocus ? gGetKeyboardFocus() : NULL;
+        if (gSendMouseMotion && window) {
+            // Absolute coordinates already match the game view. SDL derives deltas,
+            // updates its mouse position, and synthesizes ENTER when needed.
+            gSendMouseMotion(window, 0, 0, x, y);
+            if (!gLoggedMouseState && gGetMouseFocus && gGetMouseState) {
+                int stateX = 0, stateY = 0;
+                gGetMouseState(&stateX, &stateY);
+                NSLog(@"[FactoriOSCursor] Stateful mouse: focus=%@ position=%d,%d requested=%d,%d",
+                    gGetMouseFocus() == window ? @"game" : @"other/none",
+                    stateX, stateY, x, y);
+                gLoggedMouseState = YES;
+            }
+            return; // SDL queued the motion; do not duplicate it.
+        }
+
         FPSDLEvent event;
         memset(
             &event,
@@ -809,6 +854,14 @@ FactorioMouseButton(
         } else {
             gSyntheticMouseButtons &=
                 ~(1u << (button - 1));
+        }
+
+        void *window = gGetKeyboardFocus ? gGetKeyboardFocus() : NULL;
+        if (gSendMouseButton && gSendMouseMotion && window) {
+            gSendMouseMotion(window, 0, 0, x, y);
+            gSendMouseButton(window, 0,
+                pressed ? FP_SDL_PRESSED : FP_SDL_RELEASED, button);
+            return; // SDL queued the button and updated its button mask.
         }
 
         FPSDLEvent event;
@@ -893,5 +946,16 @@ FactorioMouseWheel(
         gPushEvent(
             &event
         );
+    }
+}
+
+void FactorioMouseLeave(void)
+{
+    @synchronized (FPInputLock()) {
+        // Preserve implicit capture during a drag; clear focus when it ends.
+        if (gSetMouseFocus && gSyntheticMouseButtons == 0) {
+            gSetMouseFocus(NULL);
+            gLoggedMouseState = NO;
+        }
     }
 }
