@@ -32,6 +32,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     private var cursorDisplayLink: CADisplayLink?
     private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
     private var gameHidesNativePointer = false
+    private let guestMouseCursor = UIImageView()
     private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
@@ -51,6 +52,9 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
             self?.updateKeyboardButton()
             self?.keyboardButton.accessibilityLabel = "Show keyboard"
         }
+        guestMouseCursor.isUserInteractionEnabled = false
+        guestMouseCursor.isHidden = true
+        addSubview(guestMouseCursor)
         addSubview(controllerCursor)
         addSubview(onScreenKeyboard)
         keyboardButton.setImage(UIImage(systemName: "keyboard"), for: .normal)
@@ -141,7 +145,10 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
         let active = applicationActive && inputEnabled
         inputActive = active
         nativePointerInteraction.isEnabled = active
-        if !active { gameHidesNativePointer = false }
+        if !active {
+            gameHidesNativePointer = false
+            guestMouseCursor.isHidden = true
+        }
         nativePointerInteraction.invalidate()
         primaryTouch = nil
         cursorDisplayLink?.isPaused = !active
@@ -225,14 +232,30 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func updateControllerCursor() {
-        // Follow Factorio's SDL cursor state. Unknown state keeps the native pointer visible.
-        let hidesNativePointer = inputActive && FactorioMouseCursorVisibility() == 0
+        let visibility = FactorioMouseCursorVisibility()
+        let appearance = inputActive && visibility == 1 ? FactorioMouseCursorAppearance() : nil
+        let image = appearance?["image"] as? UIImage
+        let hotspot = (appearance?["hotspot"] as? NSValue)?.cgPointValue ?? .zero
+        let showsGuestCursor = inputActive && visibility == 1 &&
+            image != nil && pointerPosition != nil
+
+        guestMouseCursor.image = image
+        guestMouseCursor.isHidden = !showsGuestCursor
+        if let image, let point = pointerPosition {
+            guestMouseCursor.frame = CGRect(
+                origin: CGPoint(x: point.x - hotspot.x, y: point.y - hotspot.y),
+                size: image.size)
+        }
+
+        // Preserve the tested Controller behavior. Replace the native mouse pointer
+        // only when the guest image is available and actually displayed.
+        let hidesNativePointer = inputActive && (visibility == 0 || showsGuestCursor)
         if gameHidesNativePointer != hidesNativePointer {
             gameHidesNativePointer = hidesNativePointer
             nativePointerInteraction.invalidate()
         }
-        // Unlocked iPad input uses the native pointer. Raw mouse input needs an overlay.
-        controllerCursor.isHidden = !inputActive || !useRawMouse || pointerPosition == nil
+        controllerCursor.isHidden = !inputActive || visibility == 0 ||
+            showsGuestCursor || !useRawMouse || pointerPosition == nil
         controllerCursor.frame.origin = pointerPosition ?? .zero
     }
 
@@ -316,6 +339,7 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
             updateMouseButtons([], at: pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY))
         }
         pointerPosition = nil
+        guestMouseCursor.isHidden = true
         scrollRemainder = .zero
     }
 
@@ -443,8 +467,14 @@ final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
 
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
-        guard inputActive, !useRawMouse,
-            gesture.state == .began || gesture.state == .changed else { return }
+        guard inputActive, !useRawMouse else { return }
+        if gesture.state == .ended || gesture.state == .cancelled {
+            pointerPosition = nil
+            guestMouseCursor.isHidden = true
+            updateControllerCursor()
+            return
+        }
+        guard gesture.state == .began || gesture.state == .changed else { return }
         movePointer(to: gesture.location(in: self))
     }
 
