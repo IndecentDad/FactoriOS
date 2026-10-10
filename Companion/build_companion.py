@@ -143,7 +143,6 @@ def make_release(ipa, output):
         # Always strip game files, even when the input is a personal IPA.
         make_template(ipa, resources / "FactorioPad-template.ipa")
         prepare_seven_zip(resources / "7zip")
-        shutil.copyfile(PROJECT / "Tools/freeplay_control.lua", resources / "freeplay_control.lua")
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed", "--noupx",
                    "--name", NAME, "--distpath", str(work / "dist"), "--workpath", str(work / "build"),
                    "--specpath", str(work), "--add-data", str(resources) + os.pathsep + ".", str(PROJECT / "Tools/companion.py")]
