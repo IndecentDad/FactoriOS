@@ -14,6 +14,7 @@ typedef FPSDLCursor *(*FPSDLGetCursorFn)(void);
 static FPSDLGetCursorFn gGetCursor = NULL;
 
 @protocol FPCursorAppearance
++ (id)fpSelectedCursor;
 - (UIImage *)fpCursorImage;
 - (CGPoint)fpCursorHotSpot;
 @end
@@ -385,16 +386,22 @@ static void FPLogCursorStatus(NSString *status)
 NSDictionary *FactorioMouseCursorAppearance(void)
 {
     @synchronized (FPInputLock()) {
-        if (!gGetCursor) {
-            FPLogCursorStatus(@"Native fallback: SDL_GetCursor is unavailable.");
-            return nil;
+        // Prefer an explicit Cocoa selection; some game cursor paths bypass SDL_SetCursor.
+        Class cursorClass = NSClassFromString(@"NSCursor");
+        id object = nil;
+        NSString *source = @"SDL";
+        if ([cursorClass respondsToSelector:@selector(fpSelectedCursor)]) {
+            object = [(id<FPCursorAppearance>)cursorClass fpSelectedCursor];
+            if (object) source = @"Cocoa";
         }
-        FPSDLCursor *cursor = gGetCursor();
-        if (!cursor || !cursor->driverdata) {
-            FPLogCursorStatus(@"Native fallback: SDL has no selected cursor/driverdata.");
-            return nil;
+        if (!object) {
+            FPSDLCursor *cursor = gGetCursor ? gGetCursor() : NULL;
+            if (!cursor || !cursor->driverdata) {
+                FPLogCursorStatus(@"Native fallback: no selected Cocoa or SDL cursor.");
+                return nil;
+            }
+            object = (__bridge id)cursor->driverdata;
         }
-        id object = (__bridge id)cursor->driverdata;
         if (![object respondsToSelector:@selector(fpCursorImage)] ||
             ![object respondsToSelector:@selector(fpCursorHotSpot)]) {
             FPLogCursorStatus([NSString stringWithFormat:
@@ -407,7 +414,7 @@ NSDictionary *FactorioMouseCursorAppearance(void)
                 @"Native fallback: selected %@ has no custom image (possibly a system cursor).", NSStringFromClass([object class])]);
             return nil;
         }
-        FPLogCursorStatus(@"Selected SDL cursor has a custom image.");
+        FPLogCursorStatus([NSString stringWithFormat:@"Selected %@ cursor has a custom image.", source]);
         CGPoint hotspot = [(id<FPCursorAppearance>)object fpCursorHotSpot];
         return @{@"image": image, @"hotspot": [NSValue valueWithCGPoint:hotspot]};
     }
