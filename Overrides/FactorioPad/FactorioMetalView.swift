@@ -3,7 +3,7 @@ import GameController
 import SwiftUI
 import UIKit
 
-final class FactorioHostUIView: UIView {
+final class FactorioHostUIView: UIView, UIPointerInteractionDelegate {
     var presentationReady = false
     var inputEnabled = true {
         didSet {
@@ -30,7 +30,13 @@ final class FactorioHostUIView: UIView {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
-    private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
+    private let controllerCursor = UIImageView()
+    private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
+    private var guestCursorReceived = false
+    private var guestCursorHidden = false
+    private var cursorHotSpot = CGPoint.zero
+    private var lastPointerMovement: CFTimeInterval = 0
+    private let pointerIdleTimeout: CFTimeInterval = 2
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
 
@@ -49,6 +55,9 @@ final class FactorioHostUIView: UIView {
             self?.updateKeyboardButton()
             self?.keyboardButton.accessibilityLabel = "Show keyboard"
         }
+        controllerCursor.isUserInteractionEnabled = false
+        controllerCursor.tintColor = .white
+        controllerCursor.isHidden = true
         addSubview(controllerCursor)
         addSubview(onScreenKeyboard)
         keyboardButton.setImage(UIImage(systemName: "keyboard"), for: .normal)
@@ -68,6 +77,7 @@ final class FactorioHostUIView: UIView {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
+        addInteraction(nativePointerInteraction)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -75,6 +85,16 @@ final class FactorioHostUIView: UIView {
         addGestureRecognizer(scroll)
 
         let center = NotificationCenter.default
+        lifecycleObservers.append(center.addObserver(forName: Notification.Name("FactoriOSGuestCursorChanged"),
+            object: nil, queue: .main) { [weak self] notification in
+                guard let self else { return }
+                self.guestCursorReceived = true
+                self.guestCursorHidden = notification.userInfo?["hidden"] as? Bool ?? false
+                self.controllerCursor.image = notification.userInfo?["image"] as? UIImage
+                self.cursorHotSpot = (notification.userInfo?["hotspot"] as? NSValue)?.cgPointValue ?? .zero
+                self.nativePointerInteraction.invalidate()
+                self.updateControllerCursor()
+            })
         lifecycleObservers.append(center.addObserver(forName: UIApplication.willResignActiveNotification,
             object: nil, queue: .main) { [weak self] _ in self?.setInputActive(false) })
         lifecycleObservers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification,
@@ -219,9 +239,22 @@ final class FactorioHostUIView: UIView {
     }
 
     @objc private func updateControllerCursor() {
-        // Unlocked iPad input uses the native pointer. Raw mouse input needs an overlay.
-        controllerCursor.isHidden = !inputActive || !useRawMouse || pointerPosition == nil
-        controllerCursor.frame.origin = pointerPosition ?? .zero
+        let recentMovement = lastPointerMovement > 0 &&
+            CACurrentMediaTime() - lastPointerMovement < pointerIdleTimeout
+        controllerCursor.isHidden = !inputActive || !guestCursorReceived || guestCursorHidden ||
+            pointerPosition == nil || !recentMovement || controllerCursor.image == nil
+        if let point = pointerPosition, let image = controllerCursor.image {
+            controllerCursor.frame = CGRect(
+                origin: CGPoint(x: point.x - cursorHotSpot.x, y: point.y - cursorHotSpot.y),
+                size: image.size)
+        }
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        // Keep a native fallback until the guest supplies its cursor state.
+        // An invisible guest cursor lets Factorio render its controller crosshair itself.
+        return guestCursorReceived ? .hidden() : nil
     }
 
     @objc private func toggleKeyboard() {
@@ -291,6 +324,8 @@ final class FactorioHostUIView: UIView {
             updateMouseButtons([], at: pointerPosition ?? CGPoint(x: bounds.midX, y: bounds.midY))
         }
         pointerPosition = nil
+        lastPointerMovement = 0
+        controllerCursor.isHidden = true
         scrollRemainder = .zero
     }
 
@@ -350,6 +385,9 @@ final class FactorioHostUIView: UIView {
             y: min(max(point.y, 0), max(bounds.height - 1, 0)))
         let old = pointerPosition ?? point
         pointerPosition = point
+        if old != point || lastPointerMovement == 0 {
+            lastPointerMovement = CACurrentMediaTime()
+        }
         FactorioMouseMove(Int32(point.x.rounded()), Int32(point.y.rounded()),
             Int32(point.x.rounded() - old.x.rounded()), Int32(point.y.rounded() - old.y.rounded()))
     }
@@ -418,8 +456,14 @@ final class FactorioHostUIView: UIView {
 
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
-        guard inputActive, !useRawMouse,
-            gesture.state == .began || gesture.state == .changed else { return }
+        guard inputActive, !useRawMouse else { return }
+        if gesture.state == .ended || gesture.state == .cancelled {
+            pointerPosition = nil
+            lastPointerMovement = 0
+            controllerCursor.isHidden = true
+            return
+        }
+        guard gesture.state == .began || gesture.state == .changed else { return }
         movePointer(to: gesture.location(in: self))
     }
 
