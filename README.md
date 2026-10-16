@@ -1,6 +1,6 @@
 # FactorioPad
 
-Play Factorio on your iPhone or iPad. You need iOS 17 or iPadOS 17 or newer, plus a gamepad or a keyboard and mouse. Touch supports menus, but not touch-only gameplay.
+Play Factorio on your iPhone or iPad. You need iOS 17 or iPadOS 17 or newer. Use touch controls, a gamepad, or a keyboard and mouse.
 
 You need your own copy of Factorio. You do not need Xcode or a Mac.
 Tested on Factorio 2.0.77. Other versions are allowed but untested.
@@ -22,7 +22,8 @@ The companion supports Windows x64, Macs with Apple silicon, and Linux x64.
 Wait for the import progress bar to finish. FactorioPad keeps its own copy for later launches.
 After import, you can remove the original folder.
 Before you press `Play`, choose a mode from the `Controls` and `Graphics` dropdowns.
-`Low (less memory)` reduces texture detail and disables high-quality animations and shadows. The app remembers both choices.
+`Medium` is the default. `Low` also reduces animation quality. `High` increases texture and shadow detail but can exceed your device's memory limit.
+The app remembers your choice and preserves existing Low or High selections. Supported GPUs use Factorio's default texture compression.
 Save sharing is optional. Choose `Play without sync` to start without it.
 
 Keep your generated IPA private because it contains your Factorio executable.
@@ -31,10 +32,10 @@ Keep your generated IPA private because it contains your Factorio executable.
 
 - A gamepad uses `Mouse and keyboard emulation` by default. Select `Factorio native controls` for analog movement and Factorio's controller interface.
 - Physical keyboards and mice support typing, clicks, dragging, and scrolling.
-- Touch supports menu taps and drags.
+- Touch controls provide movement, aiming, building, mining, and shortcuts on iPhone and iPad.
 - New installations use a 150% interface scale and one visible quickbar.
 - New freeplay games skip the opening cutscene and tutorial prompt.
-- Tap the keyboard button to type. Hold it to see the gamepad controls.
+- Tap the keyboard button to type. Hold it to see the guide for your current controls.
 - Full-screen play keeps a connected mouse pointer inside the game.
 
 ## Share saves through iCloud
