@@ -3,7 +3,7 @@ import GameController
 import SwiftUI
 import UIKit
 
-final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
+final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
     var presentationReady = false
     var inputEnabled = true {
         didSet {
@@ -31,6 +31,8 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
+    private lazy var nativePointerInteraction = UIPointerInteraction(delegate: self)
+    private var gameHidesNativePointer = false
     private let controllerCursor = FactorioControllerCursorView(frame: CGRect(x: 0, y: 0, width: 18, height: 23))
     private let onScreenKeyboard = FactorioOnScreenKeyboardView()
     private let keyboardButton = FactorioTouchOnlyButton(type: .system)
@@ -98,6 +100,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(pointerHovered))
         addGestureRecognizer(hover)
+        addInteraction(nativePointerInteraction)
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(pointerScrolled))
         scroll.allowedScrollTypesMask = .all
         scroll.allowedTouchTypes = []
@@ -176,6 +179,9 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
     private func setInputActive(_ applicationActive: Bool) {
         let active = applicationActive && inputEnabled
         inputActive = active
+        nativePointerInteraction.isEnabled = active
+        if !active { gameHidesNativePointer = false }
+        nativePointerInteraction.invalidate()
         cancelGameTouch()
         cursorDisplayLink?.isPaused = !applicationActive
         FactorioControllerBridgeSetActive(active)
@@ -270,6 +276,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
         Self.factorioStarted = true
         configureAudioSession()
         FactorioLoader.start(withWindowSize: bounds.size)
+        updatePointerLockPreference()
         updateTouchControls()
         setNeedsLayout()
     }
@@ -277,9 +284,29 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
     @objc private func updateControllerCursor() {
         // SDL can create or refocus its window while an app screen is open.
         FactorioInputSetActive(inputActive)
+        // Follow the game's cursor state only in native mode. Never change SDL input mode.
+        let hidesNativePointer = inputActive && FactorioLoader.usesNativeController
+            && FactorioMouseCursorVisibility() == 0
+        if gameHidesNativePointer != hidesNativePointer {
+            gameHidesNativePointer = hidesNativePointer
+            nativePointerInteraction.invalidate()
+        }
         controllerCursor.isHidden = !inputActive || (!(hasPhysicalMouse && useRawMouse)
             && (FactorioLoader.usesNativeController || !hasGamepad) && (touchControls.isHidden || !touchControls.precision))
         controllerCursor.frame.origin = FactorioControllerBridgeGetCursorPosition()
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        regionFor request: UIPointerRegionRequest,
+        defaultRegion: UIPointerRegion) -> UIPointerRegion? {
+        guard inputActive else { return nil }
+        // Visibility changes are confined to this view, never the iPad or other display.
+        return UIPointerRegion(rect: bounds, identifier: nil)
+    }
+
+    func pointerInteraction(_ interaction: UIPointerInteraction,
+        styleFor region: UIPointerRegion) -> UIPointerStyle? {
+        return inputActive && gameHidesNativePointer ? .hidden() : nil
     }
 
     @objc private func toggleKeyboard() {
@@ -716,7 +743,11 @@ final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
     private var hasAppeared = false
     private var lastStartupGeometry: String?
-    override var prefersPointerLocked: Bool { gameView.inputEnabled && gameView.hasPhysicalMouse }
+    override var prefersPointerLocked: Bool {
+        // Let iPad native input cross displays; retain upstream capture for emulation and iPhone.
+        if UIDevice.current.userInterfaceIdiom == .pad && FactorioLoader.usesNativeController { return false }
+        return gameView.inputEnabled && gameView.hasPhysicalMouse
+    }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
