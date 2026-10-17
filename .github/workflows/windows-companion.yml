@@ -1,0 +1,90 @@
+name: Build FactoriOS Windows Companion
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source branch matching the already-built template
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: factorios-companion-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out matching source tools
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: Source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Apply FactoriOS companion
+        shell: pwsh
+        run: Copy-Item Companion/*.py Source/Tools/ -Force
+      - name: Install companion build tools
+        working-directory: Source
+        run: uv sync --locked
+      - name: Validate companion and packaging
+        shell: bash
+        run: |
+          python -m py_compile Companion/companion.py Companion/package_ipa.py Companion/build_companion.py
+          python Tests/test_factorios_package_ipa.py Source
+      - name: Select matching template release
+        id: release
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          TAG="FactoriOS-latest"
+          if [ "$SOURCE_REF" != main ]; then
+            SAFE_BRANCH="$(printf '%s' "$SOURCE_REF" | sed 's/[^A-Za-z0-9._-]/-/g')"
+            TAG="FactoriOS-branch-$SAFE_BRANCH"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Download matching game-free template
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-input
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern FactoriOS-template.ipa --pattern template-build.json --dir build-input
+          python -c 'import json, subprocess; assert json.load(open("build-input/template-build.json"))["source_sha"] == subprocess.check_output(["git", "-C", "Source", "rev-parse", "HEAD"], text=True).strip(), "Source changed: build its template again before the companion."'
+          mv build-input/FactoriOS-template.ipa build-input/FactorioPad-template.ipa
+      - name: Build Windows companion
+        working-directory: Source
+        shell: bash
+        run: |
+          uv run --frozen python Tools/build_companion.py \
+            --template ../build-input/FactorioPad-template.ipa \
+            --output dist/FactoriOS-Companion-Windows-x64.zip
+      - name: Publish Windows companion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" Source/dist/FactoriOS-Companion-Windows-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FactoriOS-Companion-Windows-x64
+          path: Source/dist/FactoriOS-Companion-Windows-x64.zip
+          if-no-files-found: error
