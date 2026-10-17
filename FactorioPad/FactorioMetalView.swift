@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 
 final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
+    var presentationReady = false
     var inputEnabled = true {
         didSet {
             setInputActive(window != nil && UIApplication.shared.applicationState == .active)
@@ -19,6 +20,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
     private var hasPhysicalKeyboard: Bool { GCKeyboard.coalesced != nil }
     private var hasGamepad: Bool { GCController.controllers().contains { $0.extendedGamepad != nil } }
     private static var factorioStarted = false
+    private var pendingStartSize: CGSize?
     private var primaryTouch: UITouch?
     private var pressedKeys = Set<Int>()
     private var mouseButtons: UIEvent.ButtonMask = []
@@ -167,6 +169,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
     func detach() {
         cursorDisplayLink?.invalidate()
         cursorDisplayLink = nil
+        if !Self.factorioStarted { pendingStartSize = nil; presentationReady = false }
         setInputActive(false)
     }
 
@@ -221,12 +224,17 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
         onScreenKeyboard.frame = CGRect(x: 0, y: bounds.maxY - keyboardHeight,
             width: bounds.width, height: keyboardHeight)
 
-        if !Self.factorioStarted {
-            FactorioLoader.logMessage("Game view layout is ready")
-            Self.factorioStarted = true
-            configureAudioSession()
-            FactorioLoader.start(withWindowSize: bounds.size)
-            updateTouchControls()
+        if !Self.factorioStarted && presentationReady {
+            let candidate = bounds.size
+            if pendingStartSize != candidate {
+                pendingStartSize = candidate
+                FactorioLoader.logMessage(
+                    "Game view candidate: \(Int(candidate.width))x\(Int(candidate.height))"
+                )
+                DispatchQueue.main.async { [weak self] in
+                    self?.startFactorioIfLayoutStable(candidate)
+                }
+            }
         }
         keyboardButton.frame = FactorioLoader.usesNativeController
             ? FactorioTouchLayout.nativeKeyboardFrame(in: bounds)
@@ -234,6 +242,36 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
         FactorioControllerBridgeSetViewportSize(bounds.width, bounds.height)
         if !touchControls.isHidden && pointerPosition == nil { movePointer(to: CGPoint(x: bounds.midX, y: bounds.midY)) }
         FactorioTouchUpdateWindowSize()
+    }
+
+    private func startFactorioIfLayoutStable(_ expectedSize: CGSize) {
+        guard !Self.factorioStarted, presentationReady, window != nil,
+            abs(bounds.width - expectedSize.width) < 0.5,
+            abs(bounds.height - expectedSize.height) < 0.5 else {
+                pendingStartSize = nil
+                return
+            }
+
+        let scene = window?.windowScene
+        let screen = scene?.screen
+        let windowSize = window?.bounds.size ?? .zero
+        let screenSize = screen?.bounds.size ?? .zero
+        let nativeSize = screen?.nativeBounds.size ?? .zero
+        let orientation = scene?.interfaceOrientation.rawValue ?? 0
+        FactorioLoader.logMessage(
+            "Stable game view: \(Int(bounds.width))x\(Int(bounds.height)); " +
+            "window: \(Int(windowSize.width))x\(Int(windowSize.height)); " +
+            "screen: \(Int(screenSize.width))x\(Int(screenSize.height)); " +
+            "native: \(Int(nativeSize.width))x\(Int(nativeSize.height)); " +
+            "orientation: \(orientation)"
+        )
+
+        pendingStartSize = nil
+        Self.factorioStarted = true
+        configureAudioSession()
+        FactorioLoader.start(withWindowSize: bounds.size)
+        updateTouchControls()
+        setNeedsLayout()
     }
 
     @objc private func updateControllerCursor() {
@@ -676,10 +714,10 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate {
 
 final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
+    private var hasAppeared = false
+    private var lastStartupGeometry: String?
     override var prefersPointerLocked: Bool { gameView.inputEnabled && gameView.hasPhysicalMouse }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
-    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .landscape }
-    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .landscapeRight }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
@@ -696,23 +734,44 @@ final class FactorioViewController: UIViewController {
             root.gameController = self
             root.setNeedsUpdateOfPrefersPointerLocked()
         }
-        setNeedsUpdateOfSupportedInterfaceOrientations()
         setNeedsStatusBarAppearanceUpdate()
         setNeedsUpdateOfHomeIndicatorAutoHidden()
         setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
         setNeedsUpdateOfPrefersPointerLocked()
+        hasAppeared = true
         view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { error in
-            NSLog("[FactorioPad] Landscape request: %@", error.localizedDescription)
+            FactorioLoader.logMessage("Landscape geometry request failed: \(error.localizedDescription)")
         }
+        view.setNeedsLayout()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // iPadOS can supply a tall multitasking window despite orientation preferences.
         // Keep the game landscape-shaped, with black bars outside the game viewport.
         let height = min(view.bounds.height, view.bounds.width * 0.75)
         gameView.frame = CGRect(x: 0, y: (view.bounds.height - height) / 2,
             width: view.bounds.width, height: height)
+
+        guard let scene = view.window?.windowScene else { return }
+        let viewSize = view.bounds.size
+        let screenSize = scene.screen.bounds.size
+        let viewIsLandscape = viewSize.width >= viewSize.height
+        let screenIsLandscape = screenSize.width >= screenSize.height
+        let geometryMatchesScreen = viewIsLandscape == screenIsLandscape
+        let ready = hasAppeared && geometryMatchesScreen
+
+        let geometry = "controller=\(Int(viewSize.width))x\(Int(viewSize.height)); " +
+            "screen=\(Int(screenSize.width))x\(Int(screenSize.height)); " +
+            "orientation=\(scene.interfaceOrientation.rawValue); ready=\(ready)"
+        if geometry != lastStartupGeometry {
+            lastStartupGeometry = geometry
+            FactorioLoader.logMessage("Startup geometry: \(geometry)")
+        }
+
+        if gameView.presentationReady != ready {
+            gameView.presentationReady = ready
+            if ready { gameView.setNeedsLayout() }
+        }
     }
 }
 
