@@ -44,7 +44,9 @@ final class FactorioRootController: UIHostingController<FactorioLaunchView> {
 
     override var prefersPointerLocked: Bool { gameController?.prefersPointerLocked ?? false }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
-    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
+        gameController?.preferredScreenEdgesDeferringSystemGestures ?? [.bottom, .right]
+    }
 }
 
 extension Notification.Name {
@@ -76,7 +78,8 @@ struct FactorioLaunchView: View {
                     .ignoresSafeArea()
                     .persistentSystemOverlays(.hidden)
                     .statusBarHidden(true)
-                    .defersSystemGestures(on: [.bottom, .trailing])
+                    // UIKit owns dynamic screen-edge deferral so "Unlocked" can
+                    // restore normal cross-display edge behavior on the iPad.
                     .overlay {
                         if showsControls {
                             FactorioControlsView(onClose: { showsControls = false }, onSaves: {
