@@ -743,9 +743,14 @@ final class FactorioViewController: UIViewController {
     let gameView = FactorioHostUIView(frame: .zero)
     private var hasAppeared = false
     private var lastStartupGeometry: String?
+    private var lastPointerLockScreen: UIScreen?
     override var prefersPointerLocked: Bool {
-        // Let iPad native input cross displays; retain upstream capture for emulation and iPhone.
-        if UIDevice.current.userInterfaceIdiom == .pad && FactorioLoader.usesNativeController { return false }
+        // Native iPad input stays captured on the built-in screen, but can cross displays
+        // when the game window is on an external monitor. Preserve upstream behavior otherwise.
+        if UIDevice.current.userInterfaceIdiom == .pad && FactorioLoader.usesNativeController {
+            guard let screen = gameView.window?.windowScene?.screen else { return false }
+            return gameView.inputEnabled && gameView.hasPhysicalMouse && screen === UIScreen.main
+        }
         return gameView.inputEnabled && gameView.hasPhysicalMouse
     }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
@@ -784,6 +789,10 @@ final class FactorioViewController: UIViewController {
             width: view.bounds.width, height: height)
 
         guard let scene = view.window?.windowScene else { return }
+        if lastPointerLockScreen !== scene.screen {
+            lastPointerLockScreen = scene.screen
+            (view.window?.rootViewController ?? self).setNeedsUpdateOfPrefersPointerLocked()
+        }
         let viewSize = view.bounds.size
         let screenSize = scene.screen.bounds.size
         let viewIsLandscape = viewSize.width >= viewSize.height
