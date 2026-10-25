@@ -622,7 +622,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
         updateRawMouseHandlers(force: true)
     }
 
-    private func updateRawMouseHandlers(force: Bool = false) {
+    func updateRawMouseHandlers(force: Bool = false) {
         // On the built-in iPad screen, relinquish GameController's raw mouse
         // handlers when the user requests an unlocked cross-display cursor.
         // Normal UIKit hover, click and scroll events continue handling input.
