@@ -32,10 +32,8 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private var mouseButtons: UIEvent.ButtonMask = []
     private var mouseButtonSources = FactorioMouseButtonSources()
     private var pointerPosition: CGPoint?
-    private var lastHoverBoundary: String?
     private var scrollRemainder = CGPoint.zero
     private var mice: [GCMouse] = []
-    private var rawMouseHandlersInstalled = false
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
@@ -144,15 +142,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
             guard let self, let mouse = notification.object as? GCMouse,
                 self.mice.contains(where: { $0 === mouse }) else { return }
             let buttons = self.mouseButtonSources.remove(ObjectIdentifier(mouse))
-            if let input = mouse.mouseInput {
-                input.mouseMovedHandler = nil
-                input.leftButton.pressedChangedHandler = nil
-                input.rightButton?.pressedChangedHandler = nil
-                input.middleButton?.pressedChangedHandler = nil
-                input.scroll.valueChangedHandler = nil
-            }
             self.mice.removeAll { $0 === mouse }
-            self.updateRawMouseHandlers(force: true)
             if self.mice.isEmpty {
                 self.releaseMouseInput()
             } else if self.useRawMouse {
@@ -164,10 +154,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
             for replacement in GCMouse.mice() { self.installMouse(replacement) }
         })
         lifecycleObservers.append(center.addObserver(forName: UIPointerLockState.didChangeNotification,
-            object: nil, queue: .main) { [weak self] _ in
-            self?.releaseMouseInput()
-            self?.updateRawMouseHandlers()
-        })
+            object: nil, queue: .main) { [weak self] _ in self?.releaseMouseInput() })
         for name in [Notification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
             .GCControllerDidConnect, .GCControllerDidDisconnect] {
             lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) {
@@ -198,9 +185,9 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private func setInputActive(_ applicationActive: Bool) {
         let active = applicationActive && inputEnabled
         inputActive = active
-        updateRawMouseHandlers()
-        updateNativePointerInteractionPolicy()
+        nativePointerInteraction.isEnabled = active
         if !active { gameHidesNativePointer = false }
+        nativePointerInteraction.invalidate()
         cancelGameTouch()
         cursorDisplayLink?.isPaused = !applicationActive
         FactorioControllerBridgeSetActive(active)
@@ -215,14 +202,6 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
         updateTouchControls()
         // Keep the game rendering under help sheets. Suspend only for app lifecycle events.
         FactorioMetalLayer.setApplicationActive(applicationActive)
-    }
-
-    func updateNativePointerInteractionPolicy() {
-        // While the game is unlocked on the built-in display, let iPadOS own
-        // the actual system cursor. Avoid a fullscreen custom pointer region.
-        nativePointerInteraction.isEnabled = inputActive
-            && !(hostController?.shouldReleaseSystemPointerOnIPad ?? false)
-        nativePointerInteraction.invalidate()
     }
 
     override func didMoveToWindow() {
@@ -615,66 +594,38 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     }
 
     private func installMouse(_ mouse: GCMouse) {
-        guard !mice.contains(where: { $0 === mouse }), mouse.mouseInput != nil else { return }
+        guard !mice.contains(where: { $0 === mouse }), let input = mouse.mouseInput else { return }
+        let device = ObjectIdentifier(mouse)
         mice.append(mouse)
         updateTouchControls()
         updatePointerLockPreference()
-        updateRawMouseHandlers(force: true)
-    }
-
-    func updateRawMouseHandlers(force: Bool = false) {
-        // On the built-in iPad screen, relinquish GameController's raw mouse
-        // handlers when the user requests an unlocked cross-display cursor.
-        // Normal UIKit hover, click and scroll events continue handling input.
-        // Leave standalone gameplay and external-monitor gameplay unchanged.
-        let useSystemCursor = hostController?.shouldReleaseSystemPointerOnIPad == true
-        let installHandlers = inputActive && !useSystemCursor
-        guard force || rawMouseHandlersInstalled != installHandlers else { return }
-        rawMouseHandlersInstalled = installHandlers
-
-        for mouse in mice {
-            guard let input = mouse.mouseInput else { continue }
-            mouse.handlerQueue = .main
-            if installHandlers {
-                let device = ObjectIdentifier(mouse)
-                input.mouseMovedHandler = { [weak self] _, dx, dy in
-                    guard let self, self.inputActive, self.useRawMouse else { return }
-                    let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
-                    let speed: CGFloat = 1.0
-                    self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
-                        y: origin.y - CGFloat(dy) * speed))
-                }
-                input.leftButton.pressedChangedHandler = { [weak self] _, _, pressed in
-                    self?.mouseButton(.primary, pressed: pressed, from: device)
-                }
-                input.rightButton?.pressedChangedHandler = { [weak self] _, _, pressed in
-                    self?.mouseButton(.secondary, pressed: pressed, from: device)
-                }
-                input.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
-                    self?.mouseButton(.button(3), pressed: pressed, from: device)
-                }
-                input.scroll.valueChangedHandler = { [weak self] _, x, y in
-                    guard let self, self.inputActive, self.useRawMouse else { return }
-                    self.scrollRemainder.x += CGFloat(x)
-                    self.scrollRemainder.y += CGFloat(y)
-                    let stepsX = Int32(self.scrollRemainder.x.rounded(.towardZero))
-                    let stepsY = Int32(self.scrollRemainder.y.rounded(.towardZero))
-                    self.scrollRemainder.x -= CGFloat(stepsX)
-                    self.scrollRemainder.y -= CGFloat(stepsY)
-                    if stepsX != 0 || stepsY != 0 { FactorioMouseWheel(stepsX, stepsY) }
-                }
-            } else {
-                input.mouseMovedHandler = nil
-                input.leftButton.pressedChangedHandler = nil
-                input.rightButton?.pressedChangedHandler = nil
-                input.middleButton?.pressedChangedHandler = nil
-                input.scroll.valueChangedHandler = nil
-            }
+        mouse.handlerQueue = .main
+        input.mouseMovedHandler = { [weak self] _, dx, dy in
+            guard let self, self.inputActive, self.useRawMouse else { return }
+            let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+            let speed: CGFloat = 1.0
+            self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
+                y: origin.y - CGFloat(dy) * speed))
         }
-        FactorioLoader.logMessage(
-            "Mouse handler routing: \(installHandlers ? "raw registered" : "raw released"), " +
-            "systemCursor=\(useSystemCursor), locked=\(window?.windowScene?.pointerLockState?.isLocked ?? false)"
-        )
+        input.leftButton.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.primary, pressed: pressed, from: device)
+        }
+        input.rightButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.secondary, pressed: pressed, from: device)
+        }
+        input.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+            self?.mouseButton(.button(3), pressed: pressed, from: device)
+        }
+        input.scroll.valueChangedHandler = { [weak self] _, x, y in
+            guard let self, self.inputActive, self.useRawMouse else { return }
+            self.scrollRemainder.x += CGFloat(x)
+            self.scrollRemainder.y += CGFloat(y)
+            let stepsX = Int32(self.scrollRemainder.x.rounded(.towardZero))
+            let stepsY = Int32(self.scrollRemainder.y.rounded(.towardZero))
+            self.scrollRemainder.x -= CGFloat(stepsX)
+            self.scrollRemainder.y -= CGFloat(stepsY)
+            if stepsX != 0 || stepsY != 0 { FactorioMouseWheel(stepsX, stepsY) }
+        }
     }
 
     private func mouseButton(_ button: UIEvent.ButtonMask, pressed: Bool, from device: ObjectIdentifier) {
@@ -686,51 +637,12 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
 
     private func updatePointerLockPreference() {
         (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
-        hostController?.updateSystemPointerPolicy()
-        updateRawMouseHandlers()
     }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
-        guard inputActive, !useRawMouse else { return }
-        let point = gesture.location(in: self)
-        // Record only entrance/exit and boundary changes, not every mouse move.
-        // This tells us whether UIKit delivers an exit when crossing displays.
-        if hostController?.shouldReleaseSystemPointerOnIPad == true {
-            let phase: String?
-            switch gesture.state {
-            case .began: phase = "entered"
-            case .ended: phase = "exited"
-            case .cancelled, .failed: phase = "cancelled"
-            case .changed: phase = nil
-            default: phase = nil
-            }
-            if let phase {
-                FactorioLoader.logMessage("Cursor hover: \(phase), x=\(Int(point.x)), y=\(Int(point.y))")
-            }
-            if gesture.state == .changed || gesture.state == .began {
-                let margin: CGFloat = 12
-                let boundary: String?
-                if point.x <= margin { boundary = "left" }
-                else if point.x >= bounds.width - margin { boundary = "right" }
-                else if point.y <= margin { boundary = "top" }
-                else if point.y >= bounds.height - margin { boundary = "bottom" }
-                else { boundary = nil }
-                if boundary != lastHoverBoundary {
-                    lastHoverBoundary = boundary
-                    if let boundary {
-                        FactorioLoader.logMessage(
-                            "Cursor boundary: \(boundary), x=\(Int(point.x)), y=\(Int(point.y))"
-                        )
-                    }
-                }
-            } else {
-                lastHoverBoundary = nil
-            }
-        } else {
-            lastHoverBoundary = nil
-        }
-        guard gesture.state == .began || gesture.state == .changed else { return }
-        movePointer(to: point)
+        guard inputActive, !useRawMouse,
+            gesture.state == .began || gesture.state == .changed else { return }
+        movePointer(to: gesture.location(in: self))
     }
 
     @objc private func pointerScrolled(_ gesture: UIPanGestureRecognizer) {
@@ -853,7 +765,7 @@ final class FactorioViewController: UIViewController {
         else { return true }
         guard let screen = gameView.window?.windowScene?.screen else { return false }
         // When the iPad is the only screen, always retain the tested capture behavior.
-        guard FactorioDisplayRouting.hasExternalWindowScene else {
+        guard UIScreen.screens.contains(where: { $0 !== UIScreen.main }) else {
             return screen === UIScreen.main
         }
         let selected = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? ""
@@ -866,36 +778,10 @@ final class FactorioViewController: UIViewController {
         }
     }
 
-    func updateSystemPointerPolicy() {
-        setNeedsUpdateOfPrefersPointerLocked()
-        view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
-        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
-        view.window?.rootViewController?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
-        gameView.updateNativePointerInteractionPolicy()
-        gameView.updateRawMouseHandlers()
-    }
-
-    private func logPointerState() {
-        let state = view.window?.windowScene?.pointerLockState
-        let actual = state.map { $0.isLocked ? "locked" : "unlocked" } ?? "unavailable"
-        let scene = gameView.window?.windowScene
-        let screen = scene?.screen === UIScreen.main ? "iPad" : "external"
-        let mode = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? "automatic"
-        let externalScene = FactorioDisplayRouting.hasExternalWindowScene
-        let sceneCount = FactorioDisplayRouting.activeWindowScenes
-        let physicalScreens = UIScreen.screens.count // Diagnostic only; never drives lock policy.
-        FactorioLoader.logMessage(
-            "Cursor routing: screen=\(screen), mode=\(mode), preferredLock=\(prefersPointerLocked), " +
-            "actualLock=\(actual), systemPointer=\(shouldReleaseSystemPointerOnIPad), " +
-            "externalScene=\(externalScene), scenes=\(sceneCount), " +
-            "screens=\(physicalScreens), sceneActive=\(scene?.activationState.rawValue ?? -1)"
-        )
-    }
-
     func factorioEscapePressed() {
         guard UIDevice.current.userInterfaceIdiom == .pad, FactorioLoader.usesNativeController,
             gameView.inputEnabled, gameView.hasPhysicalMouse,
-            FactorioDisplayRouting.hasExternalWindowScene,
+            UIScreen.screens.contains(where: { $0 !== UIScreen.main }),
             gameView.window?.windowScene?.screen === UIScreen.main else { return }
         let selected = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? ""
         guard (FactorioExternalCursorMode(rawValue: selected) ?? .automatic) == .automatic else { return }
@@ -904,25 +790,20 @@ final class FactorioViewController: UIViewController {
         // reading Factorio memory, changing its controls, or modifying game data.
         escapeUnlockRequested.toggle()
         FactorioLoader.logMessage("Cursor Auto (Esc beta): \(escapeUnlockRequested ? "release" : "capture") requested")
-        updateSystemPointerPolicy()
-        logPointerState()
+        setNeedsUpdateOfPrefersPointerLocked()
+        view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         for name in [UIScreen.didConnectNotification, UIScreen.didDisconnectNotification,
-            .factorioDisplayScenesChanged, UserDefaults.didChangeNotification,
-            UIPointerLockState.didChangeNotification] {
+            UserDefaults.didChangeNotification] {
             lockObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
-                if name == UIScreen.didConnectNotification ||
-                    name == UIScreen.didDisconnectNotification ||
-                    name == .factorioDisplayScenesChanged {
-                    self.escapeUnlockRequested = false
-                }
-                self.updateSystemPointerPolicy()
-                self.logPointerState()
+                if name != UserDefaults.didChangeNotification { self.escapeUnlockRequested = false }
+                self.setNeedsUpdateOfPrefersPointerLocked()
+                self.view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
             })
         }
     }
@@ -930,19 +811,7 @@ final class FactorioViewController: UIViewController {
     deinit {
         for observer in lockObservers { NotificationCenter.default.removeObserver(observer) }
     }
-    var shouldReleaseSystemPointerOnIPad: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad
-            && FactorioLoader.usesNativeController
-            && gameView.inputEnabled && gameView.hasPhysicalMouse
-            && FactorioDisplayRouting.hasExternalWindowScene
-            && gameView.window?.windowScene?.screen === UIScreen.main
-            && !prefersPointerLocked
-    }
-
-    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
-        // Give the system its edge gestures back while the cursor is released.
-        shouldReleaseSystemPointerOnIPad ? [] : [.bottom, .right]
-    }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
@@ -963,7 +832,6 @@ final class FactorioViewController: UIViewController {
         setNeedsUpdateOfHomeIndicatorAutoHidden()
         setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
         setNeedsUpdateOfPrefersPointerLocked()
-        updateSystemPointerPolicy()
         hasAppeared = true
         view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { error in
             FactorioLoader.logMessage("Landscape geometry request failed: \(error.localizedDescription)")
@@ -981,8 +849,7 @@ final class FactorioViewController: UIViewController {
         guard let scene = view.window?.windowScene else { return }
         if lastPointerLockScreen !== scene.screen {
             lastPointerLockScreen = scene.screen
-            updateSystemPointerPolicy()
-            logPointerState()
+            (view.window?.rootViewController ?? self).setNeedsUpdateOfPrefersPointerLocked()
         }
         let viewSize = view.bounds.size
         let screenSize = scene.screen.bounds.size
