@@ -35,6 +35,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private var lastHoverBoundary: String?
     private var scrollRemainder = CGPoint.zero
     private var mice: [GCMouse] = []
+    private var rawMouseHandlersInstalled = false
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var inputActive = true
     private var cursorDisplayLink: CADisplayLink?
@@ -143,7 +144,15 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
             guard let self, let mouse = notification.object as? GCMouse,
                 self.mice.contains(where: { $0 === mouse }) else { return }
             let buttons = self.mouseButtonSources.remove(ObjectIdentifier(mouse))
+            if let input = mouse.mouseInput {
+                input.mouseMovedHandler = nil
+                input.leftButton.pressedChangedHandler = nil
+                input.rightButton?.pressedChangedHandler = nil
+                input.middleButton?.pressedChangedHandler = nil
+                input.scroll.valueChangedHandler = nil
+            }
             self.mice.removeAll { $0 === mouse }
+            self.updateRawMouseHandlers(force: true)
             if self.mice.isEmpty {
                 self.releaseMouseInput()
             } else if self.useRawMouse {
@@ -155,7 +164,10 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
             for replacement in GCMouse.mice() { self.installMouse(replacement) }
         })
         lifecycleObservers.append(center.addObserver(forName: UIPointerLockState.didChangeNotification,
-            object: nil, queue: .main) { [weak self] _ in self?.releaseMouseInput() })
+            object: nil, queue: .main) { [weak self] _ in
+            self?.releaseMouseInput()
+            self?.updateRawMouseHandlers()
+        })
         for name in [Notification.Name.GCKeyboardDidConnect, .GCKeyboardDidDisconnect,
             .GCControllerDidConnect, .GCControllerDidDisconnect] {
             lifecycleObservers.append(center.addObserver(forName: name, object: nil, queue: .main) {
@@ -186,6 +198,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private func setInputActive(_ applicationActive: Bool) {
         let active = applicationActive && inputEnabled
         inputActive = active
+        updateRawMouseHandlers()
         updateNativePointerInteractionPolicy()
         if !active { gameHidesNativePointer = false }
         cancelGameTouch()
@@ -602,38 +615,66 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     }
 
     private func installMouse(_ mouse: GCMouse) {
-        guard !mice.contains(where: { $0 === mouse }), let input = mouse.mouseInput else { return }
-        let device = ObjectIdentifier(mouse)
+        guard !mice.contains(where: { $0 === mouse }), mouse.mouseInput != nil else { return }
         mice.append(mouse)
         updateTouchControls()
         updatePointerLockPreference()
-        mouse.handlerQueue = .main
-        input.mouseMovedHandler = { [weak self] _, dx, dy in
-            guard let self, self.inputActive, self.useRawMouse else { return }
-            let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
-            let speed: CGFloat = 1.0
-            self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
-                y: origin.y - CGFloat(dy) * speed))
+        updateRawMouseHandlers(force: true)
+    }
+
+    private func updateRawMouseHandlers(force: Bool = false) {
+        // On the built-in iPad screen, relinquish GameController's raw mouse
+        // handlers when the user requests an unlocked cross-display cursor.
+        // Normal UIKit hover, click and scroll events continue handling input.
+        // Leave standalone gameplay and external-monitor gameplay unchanged.
+        let useSystemCursor = hostController?.shouldReleaseSystemPointerOnIPad == true
+        let installHandlers = inputActive && !useSystemCursor
+        guard force || rawMouseHandlersInstalled != installHandlers else { return }
+        rawMouseHandlersInstalled = installHandlers
+
+        for mouse in mice {
+            guard let input = mouse.mouseInput else { continue }
+            mouse.handlerQueue = .main
+            if installHandlers {
+                let device = ObjectIdentifier(mouse)
+                input.mouseMovedHandler = { [weak self] _, dx, dy in
+                    guard let self, self.inputActive, self.useRawMouse else { return }
+                    let origin = self.pointerPosition ?? FactorioControllerBridgeGetCursorPosition()
+                    let speed: CGFloat = 1.0
+                    self.movePointer(to: CGPoint(x: origin.x + CGFloat(dx) * speed,
+                        y: origin.y - CGFloat(dy) * speed))
+                }
+                input.leftButton.pressedChangedHandler = { [weak self] _, _, pressed in
+                    self?.mouseButton(.primary, pressed: pressed, from: device)
+                }
+                input.rightButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+                    self?.mouseButton(.secondary, pressed: pressed, from: device)
+                }
+                input.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+                    self?.mouseButton(.button(3), pressed: pressed, from: device)
+                }
+                input.scroll.valueChangedHandler = { [weak self] _, x, y in
+                    guard let self, self.inputActive, self.useRawMouse else { return }
+                    self.scrollRemainder.x += CGFloat(x)
+                    self.scrollRemainder.y += CGFloat(y)
+                    let stepsX = Int32(self.scrollRemainder.x.rounded(.towardZero))
+                    let stepsY = Int32(self.scrollRemainder.y.rounded(.towardZero))
+                    self.scrollRemainder.x -= CGFloat(stepsX)
+                    self.scrollRemainder.y -= CGFloat(stepsY)
+                    if stepsX != 0 || stepsY != 0 { FactorioMouseWheel(stepsX, stepsY) }
+                }
+            } else {
+                input.mouseMovedHandler = nil
+                input.leftButton.pressedChangedHandler = nil
+                input.rightButton?.pressedChangedHandler = nil
+                input.middleButton?.pressedChangedHandler = nil
+                input.scroll.valueChangedHandler = nil
+            }
         }
-        input.leftButton.pressedChangedHandler = { [weak self] _, _, pressed in
-            self?.mouseButton(.primary, pressed: pressed, from: device)
-        }
-        input.rightButton?.pressedChangedHandler = { [weak self] _, _, pressed in
-            self?.mouseButton(.secondary, pressed: pressed, from: device)
-        }
-        input.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
-            self?.mouseButton(.button(3), pressed: pressed, from: device)
-        }
-        input.scroll.valueChangedHandler = { [weak self] _, x, y in
-            guard let self, self.inputActive, self.useRawMouse else { return }
-            self.scrollRemainder.x += CGFloat(x)
-            self.scrollRemainder.y += CGFloat(y)
-            let stepsX = Int32(self.scrollRemainder.x.rounded(.towardZero))
-            let stepsY = Int32(self.scrollRemainder.y.rounded(.towardZero))
-            self.scrollRemainder.x -= CGFloat(stepsX)
-            self.scrollRemainder.y -= CGFloat(stepsY)
-            if stepsX != 0 || stepsY != 0 { FactorioMouseWheel(stepsX, stepsY) }
-        }
+        FactorioLoader.logMessage(
+            "Mouse handler routing: \(installHandlers ? "raw registered" : "raw released"), " +
+            "systemCursor=\(useSystemCursor), locked=\(window?.windowScene?.pointerLockState?.isLocked ?? false)"
+        )
     }
 
     private func mouseButton(_ button: UIEvent.ButtonMask, pressed: Bool, from device: ObjectIdentifier) {
@@ -646,6 +687,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private func updatePointerLockPreference() {
         (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
         hostController?.updateSystemPointerPolicy()
+        updateRawMouseHandlers()
     }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
@@ -830,6 +872,7 @@ final class FactorioViewController: UIViewController {
         setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
         view.window?.rootViewController?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
         gameView.updateNativePointerInteractionPolicy()
+        gameView.updateRawMouseHandlers()
     }
 
     private func logPointerState() {
