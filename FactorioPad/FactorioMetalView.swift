@@ -185,9 +185,8 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
     private func setInputActive(_ applicationActive: Bool) {
         let active = applicationActive && inputEnabled
         inputActive = active
-        nativePointerInteraction.isEnabled = active
+        updateNativePointerInteractionPolicy()
         if !active { gameHidesNativePointer = false }
-        nativePointerInteraction.invalidate()
         cancelGameTouch()
         cursorDisplayLink?.isPaused = !applicationActive
         FactorioControllerBridgeSetActive(active)
@@ -202,6 +201,14 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
         updateTouchControls()
         // Keep the game rendering under help sheets. Suspend only for app lifecycle events.
         FactorioMetalLayer.setApplicationActive(applicationActive)
+    }
+
+    func updateNativePointerInteractionPolicy() {
+        // While the game is unlocked on the built-in display, let iPadOS own
+        // the actual system cursor. Avoid a fullscreen custom pointer region.
+        nativePointerInteraction.isEnabled = inputActive
+            && !(hostController?.shouldReleaseSystemPointerOnIPad ?? false)
+        nativePointerInteraction.invalidate()
     }
 
     override func didMoveToWindow() {
@@ -637,6 +644,7 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
 
     private func updatePointerLockPreference() {
         (window?.rootViewController ?? hostController)?.setNeedsUpdateOfPrefersPointerLocked()
+        hostController?.updateSystemPointerPolicy()
     }
 
     @objc private func pointerHovered(_ gesture: UIHoverGestureRecognizer) {
@@ -778,6 +786,25 @@ final class FactorioViewController: UIViewController {
         }
     }
 
+    func updateSystemPointerPolicy() {
+        setNeedsUpdateOfPrefersPointerLocked()
+        view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        view.window?.rootViewController?.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        gameView.updateNativePointerInteractionPolicy()
+    }
+
+    private func logPointerState() {
+        let state = view.window?.windowScene?.pointerLockState
+        let actual = state.map { $0.isLocked ? "locked" : "unlocked" } ?? "unavailable"
+        let screen = gameView.window?.windowScene?.screen === UIScreen.main ? "iPad" : "external"
+        let mode = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? "automatic"
+        FactorioLoader.logMessage(
+            "Cursor routing: screen=\(screen), mode=\(mode), preferredLock=\(prefersPointerLocked), " +
+            "actualLock=\(actual), systemPointer=\(shouldReleaseSystemPointerOnIPad)"
+        )
+    }
+
     func factorioEscapePressed() {
         guard UIDevice.current.userInterfaceIdiom == .pad, FactorioLoader.usesNativeController,
             gameView.inputEnabled, gameView.hasPhysicalMouse,
@@ -790,20 +817,20 @@ final class FactorioViewController: UIViewController {
         // reading Factorio memory, changing its controls, or modifying game data.
         escapeUnlockRequested.toggle()
         FactorioLoader.logMessage("Cursor Auto (Esc beta): \(escapeUnlockRequested ? "release" : "capture") requested")
-        setNeedsUpdateOfPrefersPointerLocked()
-        view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+        updateSystemPointerPolicy()
+        logPointerState()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         for name in [UIScreen.didConnectNotification, UIScreen.didDisconnectNotification,
-            UserDefaults.didChangeNotification] {
+            UserDefaults.didChangeNotification, UIPointerLockState.didChangeNotification] {
             lockObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: nil, queue: .main) { [weak self] _ in
                 guard let self else { return }
                 if name != UserDefaults.didChangeNotification { self.escapeUnlockRequested = false }
-                self.setNeedsUpdateOfPrefersPointerLocked()
-                self.view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+                self.updateSystemPointerPolicy()
+                self.logPointerState()
             })
         }
     }
@@ -811,7 +838,19 @@ final class FactorioViewController: UIViewController {
     deinit {
         for observer in lockObservers { NotificationCenter.default.removeObserver(observer) }
     }
-    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
+    var shouldReleaseSystemPointerOnIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+            && FactorioLoader.usesNativeController
+            && gameView.inputEnabled && gameView.hasPhysicalMouse
+            && UIScreen.screens.contains(where: { $0 !== UIScreen.main })
+            && gameView.window?.windowScene?.screen === UIScreen.main
+            && !prefersPointerLocked
+    }
+
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
+        // Give the system its edge gestures back while the cursor is released.
+        shouldReleaseSystemPointerOnIPad ? [] : [.bottom, .right]
+    }
     override var prefersStatusBarHidden: Bool { true }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
 
@@ -832,6 +871,7 @@ final class FactorioViewController: UIViewController {
         setNeedsUpdateOfHomeIndicatorAutoHidden()
         setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
         setNeedsUpdateOfPrefersPointerLocked()
+        updateSystemPointerPolicy()
         hasAppeared = true
         view.window?.windowScene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscape)) { error in
             FactorioLoader.logMessage("Landscape geometry request failed: \(error.localizedDescription)")
@@ -849,7 +889,8 @@ final class FactorioViewController: UIViewController {
         guard let scene = view.window?.windowScene else { return }
         if lastPointerLockScreen !== scene.screen {
             lastPointerLockScreen = scene.screen
-            (view.window?.rootViewController ?? self).setNeedsUpdateOfPrefersPointerLocked()
+            updateSystemPointerPolicy()
+            logPointerState()
         }
         let viewSize = view.bounds.size
         let screenSize = scene.screen.bounds.size
