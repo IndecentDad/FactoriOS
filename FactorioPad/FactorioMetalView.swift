@@ -3,6 +3,12 @@ import GameController
 import SwiftUI
 import UIKit
 
+enum FactorioExternalCursorMode: String {
+    case automatic
+    case locked
+    case unlocked
+}
+
 final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerInteractionDelegate {
     var presentationReady = false
     var inputEnabled = true {
@@ -514,8 +520,10 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
             }
             // UIKit HID usage values match SDL scancodes for standard keyboard keys.
             let code = Int(key.keyCode.rawValue)
+            var newlyPressed = false
             FactorioInputPerform {
                 if self.pressedKeys.insert(code).inserted {
+                    newlyPressed = true
                     FactorioKeyboardSetPhysicalModifierState(self.physicalModifiers())
                     FactorioKeyboardPhysicalKeyDown(Int32(code), 0)
                 } else if code == 42 {
@@ -526,6 +534,9 @@ final class FactorioHostUIView: UIView, UIGestureRecognizerDelegate, UIPointerIn
                     FactorioKeyboardInsertText(key.characters)
                 }
             }
+            // Experimental pause-menu heuristic: observe genuine Escape key downs only.
+            // Never swallow or remap the key delivered to Factorio.
+            if newlyPressed && code == 41 { hostController?.factorioEscapePressed() }
         }
         if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
     }
@@ -744,14 +755,61 @@ final class FactorioViewController: UIViewController {
     private var hasAppeared = false
     private var lastStartupGeometry: String?
     private var lastPointerLockScreen: UIScreen?
+    private var escapeUnlockRequested = false
+    private var lockObservers: [NSObjectProtocol] = []
+
     override var prefersPointerLocked: Bool {
-        // Native iPad input stays captured on the built-in screen, but can cross displays
-        // when the game window is on an external monitor. Preserve upstream behavior otherwise.
-        if UIDevice.current.userInterfaceIdiom == .pad && FactorioLoader.usesNativeController {
-            guard let screen = gameView.window?.windowScene?.screen else { return false }
-            return gameView.inputEnabled && gameView.hasPhysicalMouse && screen === UIScreen.main
+        guard gameView.inputEnabled && gameView.hasPhysicalMouse else { return false }
+        // Keep existing pointer capture rules for emulated input and iPhone.
+        guard UIDevice.current.userInterfaceIdiom == .pad && FactorioLoader.usesNativeController
+        else { return true }
+        guard let screen = gameView.window?.windowScene?.screen else { return false }
+        // When the iPad is the only screen, always retain the tested capture behavior.
+        guard UIScreen.screens.contains(where: { $0 !== UIScreen.main }) else {
+            return screen === UIScreen.main
         }
-        return gameView.inputEnabled && gameView.hasPhysicalMouse
+        let selected = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? ""
+        switch FactorioExternalCursorMode(rawValue: selected) ?? .automatic {
+        case .locked: return true
+        case .unlocked: return false
+        case .automatic:
+            // Monitor gameplay stays free; on the iPad, Escape toggles tentative release.
+            return screen === UIScreen.main && !escapeUnlockRequested
+        }
+    }
+
+    func factorioEscapePressed() {
+        guard UIDevice.current.userInterfaceIdiom == .pad, FactorioLoader.usesNativeController,
+            gameView.inputEnabled, gameView.hasPhysicalMouse,
+            UIScreen.screens.contains(where: { $0 !== UIScreen.main }),
+            gameView.window?.windowScene?.screen === UIScreen.main else { return }
+        let selected = UserDefaults.standard.string(forKey: "FactorioExternalCursorMode") ?? ""
+        guard (FactorioExternalCursorMode(rawValue: selected) ?? .automatic) == .automatic else { return }
+        // An Escape key press is NOT proof that Factorio's pause menu is open.
+        // This intentionally reversible beta heuristic lets us test the interaction without
+        // reading Factorio memory, changing its controls, or modifying game data.
+        escapeUnlockRequested.toggle()
+        FactorioLoader.logMessage("Cursor Auto (Esc beta): \(escapeUnlockRequested ? "release" : "capture") requested")
+        setNeedsUpdateOfPrefersPointerLocked()
+        view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        for name in [UIScreen.didConnectNotification, UIScreen.didDisconnectNotification,
+            UserDefaults.didChangeNotification] {
+            lockObservers.append(NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                if name != UserDefaults.didChangeNotification { self.escapeUnlockRequested = false }
+                self.setNeedsUpdateOfPrefersPointerLocked()
+                self.view.window?.rootViewController?.setNeedsUpdateOfPrefersPointerLocked()
+            })
+        }
+    }
+
+    deinit {
+        for observer in lockObservers { NotificationCenter.default.removeObserver(observer) }
     }
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
     override var prefersStatusBarHidden: Bool { true }
