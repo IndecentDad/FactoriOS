@@ -1,21 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Interactive windows on external monitors remain visible as UIWindowScenes even
-// if UIScreen.screens momentarily changes during iPad window transitions.
-enum FactorioDisplayRouting {
-    static var hasExternalWindowScene: Bool {
-        UIApplication.shared.connectedScenes.contains { scene in
-            guard let window = scene as? UIWindowScene else { return false }
-            return window.screen !== UIScreen.main
-        }
-    }
-
-    static var activeWindowScenes: Int {
-        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.count
-    }
-}
-
 @main
 final class FactorioPadApp: UIResponder, UIApplicationDelegate {
     override init() {
@@ -51,17 +36,6 @@ final class FactorioSceneDelegate: UIResponder, UIWindowSceneDelegate {
             "native: \(Int(scene.screen.nativeBounds.width))x\(Int(scene.screen.nativeBounds.height))"
         )
         self.window = window
-        // UIKit may still be finishing scene registration during willConnect.
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .factorioDisplayScenesChanged, object: nil)
-        }
-    }
-
-    func sceneDidDisconnect(_ scene: UIScene) {
-        window = nil
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .factorioDisplayScenesChanged, object: nil)
-        }
     }
 }
 
@@ -70,15 +44,12 @@ final class FactorioRootController: UIHostingController<FactorioLaunchView> {
 
     override var prefersPointerLocked: Bool { gameController?.prefersPointerLocked ?? false }
     override var prefersHomeIndicatorAutoHidden: Bool { true }
-    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
-        gameController?.preferredScreenEdgesDeferringSystemGestures ?? [.bottom, .right]
-    }
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { [.bottom, .right] }
 }
 
 extension Notification.Name {
     static let factorioStopped = Notification.Name("FactorioStopped")
     static let factorioControlsRequested = Notification.Name("FactorioControlsRequested")
-    static let factorioDisplayScenesChanged = Notification.Name("FactorioDisplayScenesChanged")
 }
 
 struct FactorioLaunchView: View {
@@ -86,9 +57,7 @@ struct FactorioLaunchView: View {
 
     @AppStorage("FactorioGraphicsPreset") private var graphicsPreset = FactorioLoader.graphicsPreset
     @AppStorage("FactorioExternalCursorMode") private var externalCursorMode = "automatic"
-    @State private var externalScreenConnected =
-        FactorioDisplayRouting.hasExternalWindowScene ||
-        UIScreen.screens.contains { $0 !== UIScreen.main }
+    @State private var externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
     @State private var stage = Stage.openingGame
     @State private var importProgress = 0.0
     @State private var showsControls = false
@@ -107,8 +76,7 @@ struct FactorioLaunchView: View {
                     .ignoresSafeArea()
                     .persistentSystemOverlays(.hidden)
                     .statusBarHidden(true)
-                    // UIKit owns dynamic screen-edge deferral so "Unlocked" can
-                    // restore normal cross-display edge behavior on the iPad.
+                    .defersSystemGestures(on: [.bottom, .trailing])
                     .overlay {
                         if showsControls {
                             FactorioControlsView(onClose: { showsControls = false }, onSaves: {
@@ -210,13 +178,10 @@ struct FactorioLaunchView: View {
             await importGame(from: nil)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScreen.didConnectNotification)) { _ in
-            refreshExternalDisplayAvailability()
+            externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIScreen.didDisconnectNotification)) { _ in
-            refreshExternalDisplayAvailability()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .factorioDisplayScenesChanged)) { _ in
-            refreshExternalDisplayAvailability()
+            externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
         }
         .onReceive(NotificationCenter.default.publisher(for: .factorioControlsRequested)) { _ in
             showsControls = true
@@ -258,11 +223,6 @@ struct FactorioLaunchView: View {
         .alert("Factorio", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK") { message = nil }
         } message: { Text(message ?? "") }
-    }
-
-    private func refreshExternalDisplayAvailability() {
-        externalScreenConnected = FactorioDisplayRouting.hasExternalWindowScene ||
-            UIScreen.screens.contains { $0 !== UIScreen.main }
     }
 
     private var externalCursorSettings: some View {
