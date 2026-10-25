@@ -56,6 +56,8 @@ struct FactorioLaunchView: View {
     private enum Stage { case gameSetup, openingGame, setup, syncing, playing, stopped }
 
     @AppStorage("FactorioGraphicsPreset") private var graphicsPreset = FactorioLoader.graphicsPreset
+    @AppStorage("FactorioExternalCursorMode") private var externalCursorMode = "automatic"
+    @State private var externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
     @State private var stage = Stage.openingGame
     @State private var importProgress = 0.0
     @State private var showsControls = false
@@ -107,6 +109,9 @@ struct FactorioLaunchView: View {
                             Text(status ?? "Factorio stopped.")
                                 .multilineTextAlignment(.center)
                             FactorioControllerModePicker(activeNativeController: FactorioLoader.usesNativeController)
+                            if externalScreenConnected && UIDevice.current.userInterfaceIdiom == .pad {
+                                externalCursorSettings
+                            }
                             if FactorioSaveSync.hasFolder {
                                 Button("Retry save sync") { Task { await syncAfterPlay() } }
                                     .buttonStyle(.borderedProminent)
@@ -129,6 +134,9 @@ struct FactorioLaunchView: View {
                                 }
                                 Text("Medium uses less memory than High. Low also reduces animation quality. High can exceed your device's memory limit.")
                                     .foregroundStyle(.secondary)
+                            }
+                            if externalScreenConnected && UIDevice.current.userInterfaceIdiom == .pad {
+                                externalCursorSettings
                             }
                             Text("Choose a folder in iCloud Drive to share saves with Factorio on your computer.")
                                 .multilineTextAlignment(.center)
@@ -168,6 +176,12 @@ struct FactorioLaunchView: View {
         }
         .task {
             await importGame(from: nil)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIScreen.didConnectNotification)) { _ in
+            externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIScreen.didDisconnectNotification)) { _ in
+            externalScreenConnected = UIScreen.screens.contains { $0 !== UIScreen.main }
         }
         .onReceive(NotificationCenter.default.publisher(for: .factorioControlsRequested)) { _ in
             showsControls = true
@@ -209,6 +223,29 @@ struct FactorioLaunchView: View {
         .alert("Factorio", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("OK") { message = nil }
         } message: { Text(message ?? "") }
+    }
+
+    private var externalCursorSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Multi-display cursor").font(.headline)
+                Spacer()
+                Picker("Pointer lock", selection: $externalCursorMode) {
+                    Text("Automatic (Esc beta)").tag("automatic")
+                    Text("Always Locked").tag("locked")
+                    Text("Always Unlocked").tag("unlocked")
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+            Text(externalCursorMode == "automatic"
+                ? "Automatic is experimental: free cursor on the monitor; on the iPad, Esc releases the cursor and the next Esc locks it again. Esc in other menus may also trigger it."
+                : externalCursorMode == "locked"
+                    ? "Capture the cursor on whichever display is running the game."
+                    : "Allow the cursor to move between displays, including during iPad gameplay. The dock can appear.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func importGame(from folder: URL?) async {
