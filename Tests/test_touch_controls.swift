@@ -17,6 +17,8 @@ import CoreGraphics
             let frames = [layout.stick, layout.modeSwitch] + layout.actions
             assert(frames.allSatisfy { safe.contains($0) }, "Controls must stay inside the safe area: \(safe)")
             assert(layout.actions.allSatisfy { $0.width >= 44 && $0.height >= 44 })
+            assert(layout.modeSwitch.size == CGSize(width: 80, height: 44),
+                "The Pad toggle must fit its icon and label side by side with an accessible height")
             assert(layout.panel.width <= 280 && layout.panel.height <= 184 && safe.contains(layout.panel))
             assert(layout.panel.maxX == safe.maxX - layout.edgeInset)
             assert(layout.stick.minX - safe.minX >= layout.edgeInset)
@@ -31,11 +33,15 @@ import CoreGraphics
         for viewport in [CGRect(x: 0, y: 0, width: 568, height: 320),
             CGRect(x: 0, y: 0, width: 852, height: 393),
             CGRect(x: 0, y: 0, width: 1133, height: 744)] {
-            let keyboard = FactorioTouchLayout.nativeKeyboardFrame(in: viewport)
+            let keyboard = FactorioTouchLayout.keyboardFrame(in: viewport)
             assert(viewport.contains(keyboard) && keyboard.size == CGSize(width: 44, height: 44))
             assert(keyboard.minX > viewport.midX && keyboard.minY > viewport.midY)
             assert(abs((viewport.maxX - keyboard.maxX) - (viewport.maxY - keyboard.maxY)) < 0.001,
-                "The native keyboard button must use matching bottom and right edge gaps")
+                "The keyboard button must use matching bottom and right edge gaps in every input mode")
+            let toggle = FactorioTouchLayout.touchToggleFrame(in: viewport)
+            assert(viewport.contains(toggle) && toggle.size == CGSize(width: 44, height: 44))
+            assert(toggle.minX == keyboard.minX && toggle.maxY == keyboard.minY - 8,
+                "Show touch controls must sit above the keyboard with an eight-point gap")
         }
         assert(movement(.zero, 56).isEmpty)
         assert(movement(CGPoint(x: 8, y: 0), 56).isEmpty)
@@ -51,6 +57,10 @@ import CoreGraphics
         assert(Set(groupedActions).count == groupedActions.count, "Each action must appear in only one Tools tab")
         assert(FactorioTouchAction.copy.key?.modifiers == 0x0040)
         assert(FactorioTouchAction.deconstruct.key?.modifiers == 0x0100)
+        assert(FactorioTouchAction.groups[1].contains(.drop))
+        assert(FactorioTouchAction.drop.key?.code == 29 && FactorioTouchAction.drop.key?.symbol == 122)
+        assert(FactorioTouchAction.drop.key?.modifiers == 0 && FactorioTouchAction.drop.held,
+            "Drop one must hold Z without modifiers until the finger is released")
         assert(FactorioTouchAction.transferStack.targetModifiers == 0x0001)
         assert(FactorioTouchAction.transferAll.targetModifiers == 0x0040)
         assert(FactorioTouchAction.allCases.filter { $0.targetModifiers != nil } == [.transferStack, .transferAll])
