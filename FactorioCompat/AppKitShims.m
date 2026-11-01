@@ -32,6 +32,11 @@ NSString *NSDeviceRGBColorSpace =
 
 
 __attribute__((visibility("default")))
+NSString *NSCalibratedRGBColorSpace =
+    @"NSCalibratedRGBColorSpace";
+
+
+__attribute__((visibility("default")))
 NSString *NSFilenamesPboardType =
     @"NSFilenamesPboardType";
 
