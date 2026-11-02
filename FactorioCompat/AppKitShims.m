@@ -52,6 +52,7 @@ EXPORT_NOTIFICATION(NSWindowDidChangeBackingPropertiesNotification)
 EXPORT_NOTIFICATION(NSWindowDidChangeScreenNotification)
 EXPORT_NOTIFICATION(NSWindowDidChangeScreenProfileNotification)
 EXPORT_NOTIFICATION(NSWindowDidDeminiaturizeNotification)
+EXPORT_NOTIFICATION(NSWindowDidEndLiveResizeNotification)
 EXPORT_NOTIFICATION(NSWindowDidEnterFullScreenNotification)
 EXPORT_NOTIFICATION(NSWindowDidExitFullScreenNotification)
 EXPORT_NOTIFICATION(NSWindowDidExposeNotification)
@@ -59,9 +60,20 @@ EXPORT_NOTIFICATION(NSWindowDidMiniaturizeNotification)
 EXPORT_NOTIFICATION(NSWindowDidMoveNotification)
 EXPORT_NOTIFICATION(NSWindowDidResignKeyNotification)
 EXPORT_NOTIFICATION(NSWindowDidResizeNotification)
+EXPORT_NOTIFICATION(NSWindowWillMiniaturizeNotification)
+EXPORT_NOTIFICATION(NSWindowWillMoveNotification)
+EXPORT_NOTIFICATION(NSWindowWillStartLiveResizeNotification)
 EXPORT_NOTIFICATION(NSWindowWillCloseNotification)
 EXPORT_NOTIFICATION(NSWindowWillEnterFullScreenNotification)
 EXPORT_NOTIFICATION(NSWindowWillExitFullScreenNotification)
+
+
+__attribute__((visibility("default")))
+const CGPoint NSZeroPoint = {0.0, 0.0};
+
+
+__attribute__((visibility("default")))
+const CGRect NSZeroRect = {{0.0, 0.0}, {0.0, 0.0}};
 
 
 static CGFloat FPDisplayScale(void)
@@ -88,6 +100,16 @@ BOOL NSMouseInRect(
 {
     (void)flipped;
 
+    return CGRectContainsPoint(rect, point);
+}
+
+
+__attribute__((visibility("default")))
+BOOL NSPointInRect(
+    CGPoint point,
+    CGRect rect
+)
+{
     return CGRectContainsPoint(rect, point);
 }
 
@@ -3874,6 +3896,137 @@ static NSCursor *gFactorioCurrentCursor = nil;
      * For a basic message box, this accepts the first/default choice.
      */
     return 1000;
+}
+
+@end
+
+#pragma mark - Unsupported desktop-only AppKit UI
+
+/*
+ * FactorioPad uses its own iOS document picker for importing game data.
+ * Desktop open/save panels have no UIKit equivalent in this compatibility
+ * layer, so a legacy request is canceled instead of returning a fake URL.
+ */
+@interface NSSavePanel : NSObject
++ (instancetype)savePanel;
+- (NSInteger)runModal;
+- (void)setAllowedContentTypes:(NSArray *)types;
+- (void)setAllowedFileTypes:(NSArray *)types;
+- (void)setCanChooseDirectories:(BOOL)flag;
+- (void)setCanChooseFiles:(BOOL)flag;
+- (void)setDirectoryURL:(NSURL *)url;
+- (void)setNameFieldStringValue:(NSString *)value;
+- (void)setPrompt:(NSString *)prompt;
+- (void)setTitle:(NSString *)title;
+- (NSURL *)URL;
+- (NSArray<NSURL *> *)URLs;
+- (void)beginSheetModalForWindow:(NSWindow *)window
+               completionHandler:(void (^)(NSInteger result))handler;
+@end
+
+@implementation NSSavePanel
+
++ (instancetype)savePanel
+{
+    static NSSavePanel *panel;
+    static dispatch_once_t onceToken;
+
+    dispatch_once(&onceToken, ^{
+        panel = [NSSavePanel new];
+    });
+
+    return panel;
+}
+
+- (NSInteger)runModal
+{
+    return 0; // NSModalResponseCancel
+}
+
+- (void)setAllowedContentTypes:(NSArray *)types { (void)types; }
+- (void)setAllowedFileTypes:(NSArray *)types { (void)types; }
+- (void)setCanChooseDirectories:(BOOL)flag { (void)flag; }
+- (void)setCanChooseFiles:(BOOL)flag { (void)flag; }
+- (void)setDirectoryURL:(NSURL *)url { (void)url; }
+- (void)setNameFieldStringValue:(NSString *)value { (void)value; }
+- (void)setPrompt:(NSString *)prompt { (void)prompt; }
+- (void)setTitle:(NSString *)title { (void)title; }
+
+- (NSURL *)URL
+{
+    return nil;
+}
+
+- (NSArray<NSURL *> *)URLs
+{
+    return @[];
+}
+
+- (void)beginSheetModalForWindow:(NSWindow *)window
+               completionHandler:(void (^)(NSInteger result))handler
+{
+    (void)window;
+    if (handler) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            handler(0); // NSModalResponseCancel
+        });
+    }
+}
+
+@end
+
+
+@interface NSOpenPanel : NSSavePanel
++ (instancetype)openPanel;
+@end
+
+@implementation NSOpenPanel
+
++ (instancetype)openPanel
+{
+    static NSOpenPanel *panel;
+    static dispatch_once_t onceToken;
+
+    dispatch_once(&onceToken, ^{
+        panel = [NSOpenPanel new];
+    });
+
+    return panel;
+}
+
+@end
+
+
+/* iOS has no desktop menu bar; callers receive no status item. */
+@interface NSStatusBar : NSObject
++ (instancetype)systemStatusBar;
+- (id)statusItemWithLength:(CGFloat)length;
+- (void)removeStatusItem:(id)item;
+@end
+
+@implementation NSStatusBar
+
++ (instancetype)systemStatusBar
+{
+    static NSStatusBar *statusBar;
+    static dispatch_once_t onceToken;
+
+    dispatch_once(&onceToken, ^{
+        statusBar = [NSStatusBar new];
+    });
+
+    return statusBar;
+}
+
+- (id)statusItemWithLength:(CGFloat)length
+{
+    (void)length;
+    return nil;
+}
+
+- (void)removeStatusItem:(id)item
+{
+    (void)item;
 }
 
 @end
