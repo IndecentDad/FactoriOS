@@ -42,6 +42,8 @@ probe.write_text(
     "void *occlusion_notification(void) { return NSWindowDidChangeOcclusionStateNotification; }\n"
     "extern void *NSWindowDidEndLiveResizeNotification;\n"
     "void *end_live_resize_notification(void) { return NSWindowDidEndLiveResizeNotification; }\n"
+    "extern void *NSWindowWillMiniaturizeNotification;\n"
+    "void *will_miniaturize_notification(void) { return NSWindowWillMiniaturizeNotification; }\n"
 )
 sdk = subprocess.check_output(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True).strip()
 subprocess.run(["xcrun", "clang", "-target", "arm64-apple-ios17.0", "-isysroot", sdk,
@@ -49,5 +51,5 @@ subprocess.run(["xcrun", "clang", "-target", "arm64-apple-ios17.0", "-isysroot",
     "-framework", "FactorioCompat", str(probe), "-o", str(probe.with_suffix(".dylib"))], check=True)
 print("The app and embedded frameworks target iOS 17 or earlier.")
 print("Older guests can resolve modff through FactorioCompat.")
-print("Factorio 2.1.24 can resolve screen parameters, calibrated RGB color space, window occlusion, and end-live-resize notifications through FactorioCompat.")
+print("Factorio 2.1.24 can resolve screen parameters, calibrated RGB color space, window occlusion, end-live-resize, and will-miniaturize notifications through FactorioCompat.")
 PY
