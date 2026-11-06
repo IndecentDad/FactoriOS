@@ -4,6 +4,7 @@
 #include <string.h>
 #import "FactorioMetalHost.h"
 #import "FactorioTouchBridge.h"
+#import "FactorioVideoBridge.h"
 
 #pragma mark - AppKit globals
 
@@ -32,6 +33,11 @@ NSString *NSDeviceRGBColorSpace =
 
 
 __attribute__((visibility("default")))
+NSString *NSCalibratedRGBColorSpace =
+    @"NSCalibratedRGBColorSpace";
+
+
+__attribute__((visibility("default")))
 NSString *NSFilenamesPboardType =
     @"NSFilenamesPboardType";
 
@@ -51,6 +57,7 @@ EXPORT_NOTIFICATION(NSWindowDidBecomeKeyNotification)
 EXPORT_NOTIFICATION(NSWindowDidChangeBackingPropertiesNotification)
 EXPORT_NOTIFICATION(NSWindowDidChangeScreenNotification)
 EXPORT_NOTIFICATION(NSWindowDidChangeScreenProfileNotification)
+EXPORT_NOTIFICATION(NSWindowDidChangeOcclusionStateNotification)
 EXPORT_NOTIFICATION(NSWindowDidDeminiaturizeNotification)
 EXPORT_NOTIFICATION(NSWindowDidEndLiveResizeNotification)
 EXPORT_NOTIFICATION(NSWindowDidEnterFullScreenNotification)
@@ -155,7 +162,7 @@ void NSRectFill(CGRect rect)
             ? NSStringFromClass([responder class])
             : nil;
 
-    if ([selfClass isEqualToString:@"SDLView"] &&
+    if (([selfClass isEqualToString:@"SDLView"] || [selfClass isEqualToString:@"SDL3View"]) &&
         [nextClass isEqualToString:@"Cocoa_WindowListener"]) {
 
         FactorioTouchRegisterSDLResponder(
@@ -204,12 +211,14 @@ void NSRectFill(CGRect rect)
 - (void)setWindowsMenu:(id)menu;
 
 - (NSArray *)orderedWindows;
+- (void)enumerateWindowsWithOptions:(NSUInteger)options usingBlock:(void (^)(id, BOOL *))block;
 - (id)windowWithWindowNumber:(NSInteger)number;
 
 - (id)keyWindow;
 - (id)mainWindow;
 
 - (BOOL)isActive;
+- (FactorioAppearance *)effectiveAppearance;
 
 - (id)windowsMenu;
 
@@ -362,6 +371,15 @@ static id FactorioCompatCreateMenu(NSString *name)
     return @[];
 }
 
+- (void)enumerateWindowsWithOptions:(NSUInteger)options usingBlock:(void (^)(id, BOOL *))block
+{
+    BOOL stop = NO;
+    for (id window in self.orderedWindows) {
+        block(window, &stop);
+        if (stop) break;
+    }
+}
+
 
 - (id)windowWithWindowNumber:(NSInteger)number
 {
@@ -385,6 +403,11 @@ static id FactorioCompatCreateMenu(NSString *name)
 - (BOOL)isActive
 {
     return YES;
+}
+
+- (FactorioAppearance *)effectiveAppearance
+{
+    return [FactorioAppearance new];
 }
 
 - (id)windowsMenu
@@ -811,31 +834,10 @@ static id FactorioCompatCreateMenu(NSString *name)
 
 
     if (wantsLayer && !_fpLayer) {
-
-        NSString *className =
-            NSStringFromClass([self class]);
-
-
-        if ([className isEqualToString:@"SDL_cocoametalview"]) {
-
-            CAMetalLayer *hostLayer =
-                [FactorioMetalHost hostMetalLayer];
-
-
-            if (hostLayer) {
-
-                _fpLayer = hostLayer;
-
-            } else {
-
-                _fpLayer =
-                    [self makeBackingLayer];
-            }
-
-        } else {
-
-            _fpLayer =
-                [self makeBackingLayer];
+        _fpLayer = [self makeBackingLayer];
+        if ([_fpLayer isKindOfClass:CAMetalLayer.class]) {
+            CAMetalLayer *hostLayer = [FactorioMetalHost hostMetalLayer];
+            if (hostLayer) { _fpLayer = hostLayer; }
         }
     }
 }
@@ -1277,6 +1279,7 @@ static id FactorioCompatCreateMenu(NSString *name)
 
 
 - (void)setTitle:(NSString *)title;
+- (NSString *)title;
 
 
 - (void)setDelegate:(id)delegate;
@@ -1548,6 +1551,8 @@ static NSInteger FactorioNextWindowNumber = 1;
     _fpTitle =
         [title copy];
 }
+
+- (NSString *)title { return _fpTitle; }
 
 
 
@@ -2014,6 +2019,9 @@ static NSInteger FactorioNextWindowNumber = 1;
 
 - (CGRect)frame;
 - (CGRect)visibleFrame;
+- (NSString *)localizedName;
+- (CGFloat)maximumExtendedDynamicRangeColorComponentValue;
+- (CGFloat)maximumPotentialExtendedDynamicRangeColorComponentValue;
 
 - (CGFloat)backingScaleFactor;
 
@@ -2068,6 +2076,10 @@ static NSInteger FactorioNextWindowNumber = 1;
 {
     return self.frame;
 }
+
+- (NSString *)localizedName { return @"Display"; }
+- (CGFloat)maximumExtendedDynamicRangeColorComponentValue { return 1.0; }
+- (CGFloat)maximumPotentialExtendedDynamicRangeColorComponentValue { return 1.0; }
 
 
 - (CGFloat)backingScaleFactor
@@ -4042,6 +4054,8 @@ static NSCursor *gFactorioCurrentCursor = nil;
 EMPTY_APPKIT_CLASS(NSBezierPath)
 EMPTY_APPKIT_CLASS(NSGraphicsContext)
 EMPTY_APPKIT_CLASS(NSOpenGLPixelFormat)
+EMPTY_APPKIT_CLASS(NSPasteboardItem)
+EMPTY_APPKIT_CLASS(NSTrackingArea)
 
 EMPTY_APPKIT_CLASS(FactorioNSColor)
 

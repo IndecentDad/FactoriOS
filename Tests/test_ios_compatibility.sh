@@ -47,7 +47,9 @@ for symbol in (
     "_NSZeroRect",
     "_OBJC_CLASS_$_NSOpenPanel",
     "_OBJC_CLASS_$_NSSavePanel",
+    "_OBJC_CLASS_$_NSPasteboardItem",
     "_OBJC_CLASS_$_NSStatusBar",
+    "_OBJC_CLASS_$_NSTrackingArea",
 ):
     if not re.search(r"(?:^|\s)" + re.escape(symbol) + r"$", exports, re.MULTILINE):
         missing.append(symbol)
