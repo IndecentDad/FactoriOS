@@ -1,0 +1,69 @@
+name: Build FactoriOS Template
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source branch to build (main or external-display)
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: factorios-template-${{ inputs.source_ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out selected game wrapper source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: Source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test packaging with selected source tools
+        run: python3 Tests/test_factorios_package_ipa.py Source
+      - name: Build game-free template
+        run: bash Tools/build_factorios_template.sh Source
+      - name: Select release
+        id: release
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          TAG="FactoriOS-latest"
+          if [ "$SOURCE_REF" != main ]; then
+            SAFE_BRANCH="$(printf '%s' "$SOURCE_REF" | sed 's/[^A-Za-z0-9._-]/-/g')"
+            TAG="FactoriOS-branch-$SAFE_BRANCH"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Publish game-free template
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          SOURCE_SHA="$(git -C Source rev-parse HEAD)"
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            EXTRA=()
+            if [ "$SOURCE_REF" != main ]; then EXTRA+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" --title "$RELEASE_TAG" \
+              --notes "Game-free FactoriOS template from $SOURCE_REF ($SOURCE_SHA)." "${EXTRA[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" dist/FactoriOS-template.ipa dist/template-build.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FactoriOS-template
+          path: dist/*
+          if-no-files-found: error

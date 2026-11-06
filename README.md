@@ -61,3 +61,22 @@ For development, see [CONTRIBUTING.md](CONTRIBUTING.md).
 If the app or game crashes, reopen FactorioPad.
 Tap `Share log` on the setup screen.
 Attach `FactorioPad.log` to your GitHub issue.
+
+## FactoriOS fork builds
+
+In this fork, open Actions and run **Build FactoriOS Template** from `main`.
+Set **source_ref** to `main` or `external-display`. After it succeeds, run
+**Build FactoriOS Windows Companion**, also from `main`, with the same source_ref.
+The companion build checks that its source commit matches the published template.
+
+Main builds publish to `FactoriOS-latest`; other branches publish prereleases such as
+`FactoriOS-branch-external-display`. Download the Windows companion ZIP from that
+release and select the same source in its Build source menu. The first device
+installation needs FactorioData; later wrapper updates can use app-only packaging
+when the installed Factorio data matches the executable version.
+
+These workflows build this fork directly. No Factorio game files are downloaded or
+published by Actions. The template gets the existing FactoriOS icon/display name
+at build time; source on the external-display contribution branch remains upstream-branded.
+The upstream **Build companion releases** workflow is also retained for its original
+FactorioPad-template.ipa release format; use the two FactoriOS workflows above for this fork.
