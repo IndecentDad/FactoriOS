@@ -54,7 +54,32 @@ for symbol in (
     if not re.search(r"(?:^|\s)" + re.escape(symbol) + r"$", exports, re.MULTILINE):
         missing.append(symbol)
 assert not missing, "FactorioCompat is missing required Factorio 2.1.24 exports: " + ", ".join(missing)
+# Link a focused regression probe against the built compatibility framework.
+probe = app.parent / "compat-appkit-probe.c"
+probe.write_text(
+    "extern void *NSApplicationDidChangeScreenParametersNotification;\n"
+    "void *screen_notification(void) { return NSApplicationDidChangeScreenParametersNotification; }\n"
+    "extern void *NSCalibratedRGBColorSpace;\n"
+    "void *calibrated_color_space(void) { return NSCalibratedRGBColorSpace; }\n"
+    "extern void *NSWindowDidChangeOcclusionStateNotification;\n"
+    "void *occlusion_notification(void) { return NSWindowDidChangeOcclusionStateNotification; }\n"
+    "extern void *NSWindowDidEndLiveResizeNotification;\n"
+    "void *end_live_resize_notification(void) { return NSWindowDidEndLiveResizeNotification; }\n"
+    "extern void *NSWindowWillMiniaturizeNotification;\n"
+    "void *will_miniaturize_notification(void) { return NSWindowWillMiniaturizeNotification; }\n"
+    "extern void *NSWindowWillMoveNotification;\n"
+    "void *will_move_notification(void) { return NSWindowWillMoveNotification; }\n"
+)
 sdk = subprocess.check_output(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], text=True).strip()
+result = subprocess.run(
+    [
+        "xcrun", "clang", "-target", "arm64-apple-ios17.0", "-isysroot", sdk,
+        "-dynamiclib", "-nostdlib", "-fno-builtin", "-Wl,-undefined,error",
+        "-F", str(app / "Frameworks"), "-framework", "FactorioCompat",
+        str(probe), "-o", str(probe.with_suffix(".dylib")),
+    ], text=True, capture_output=True,
+)
+assert result.returncode == 0, "Known AppKit imports failed to link:\n" + result.stderr
 guest = app / "Frameworks/FactorioGuest.framework/FactorioGuest"
 bind = subprocess.check_output(
     ["xcrun", "llvm-objdump", "--macho", "--bind", str(guest)], text=True
@@ -136,4 +161,5 @@ assert not failures, "Unresolved strong imports from FactorioGuest:\n" + "\n\n".
 print("The app and embedded frameworks target iOS 17 or earlier.")
 print(f"FactorioGuest imports resolve through {len(imports)} two-level namespace libraries.")
 print("Known Factorio 2.1.24 AppKit symbols and all strong guest imports resolve.")
+print("Known Factorio 2.1.24 AppKit imports link against FactorioCompat.")
 PY
