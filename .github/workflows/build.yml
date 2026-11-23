@@ -1,6 +1,9 @@
 name: Build FactoriOS Template
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/build.yml']
   workflow_dispatch:
     inputs:
       source_ref:
@@ -13,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: factorios-template-${{ inputs.source_ref }}
+  group: factorios-template-${{ inputs.source_ref || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +27,7 @@ jobs:
       - name: Check out selected game wrapper source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || github.ref_name }}
           path: Source
       - uses: actions/setup-python@v5
         with:
@@ -36,7 +39,7 @@ jobs:
       - name: Select release
         id: release
         env:
-          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
         run: |
           set -euo pipefail
           TAG="FactoriOS-latest"
@@ -49,7 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
         run: |
           set -euo pipefail
           SOURCE_SHA="$(git -C Source rev-parse HEAD)"
