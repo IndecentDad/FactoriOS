@@ -80,3 +80,41 @@ published by Actions. The template gets the existing FactoriOS icon/display name
 at build time; source on the external-display contribution branch remains upstream-branded.
 The upstream **Build companion releases** workflow is also retained for its original
 FactorioPad-template.ipa release format; use the two FactoriOS workflows above for this fork.
+
+## Local macOS template build (no GitHub-hosted macOS runner)
+
+If the GitHub-hosted macOS job is stuck waiting for a runner, use an existing Mac
+or macOS development VM with full Xcode and an iOS SDK. Xcode 26.6 can be
+tried with the current iOS wrapper; a successful build has not yet been
+verified on that installation.
+
+On the Mac, clone this fork and run:
+
+~~~sh
+git clone https://github.com/IndecentDad/FactoriOS.git
+cd FactoriOS
+xcodebuild -version
+bash Tools/build_local_template.sh
+~~~
+
+The build outputs **dist/FactoriOS-template.ipa** and
+**dist/template-build.json**. This template contains **no purchased game
+executable or assets**. The local script builds from a disposable copy, so
+it does not dirty the working checkout.
+
+To publish the template and request the **Windows companion** build, install
+GitHub CLI (for example, brew install gh if Homebrew is available),
+authenticate once with gh auth login, and run from the current main checkout:
+
+~~~sh
+git pull --ff-only origin main
+bash Tools/build_local_template.sh --publish
+~~~
+
+The publish option uploads both files to the FactoriOS-latest release and
+dispatches windows-companion.yml with source_ref=main. It does **not**
+start a GitHub macOS job. The Windows companion uses the matching template
+and your personal Factorio DMG to make a playable IPA. Do not publish that
+private final IPA.
+
+For future automation, register the Mac as a self-hosted GitHub Actions runner.
