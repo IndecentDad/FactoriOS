@@ -34,7 +34,8 @@ touch "$DATA/base/scenarios/freeplay/control.lua"
 
 xcodebuild -project "$SOURCE/FactorioPad.xcodeproj" -scheme FactorioPad \
     -configuration Release -destination 'generic/platform=iOS' \
-    -derivedDataPath "$WORK/DerivedData" CODE_SIGNING_ALLOWED=NO build
+    -derivedDataPath "$WORK/DerivedData" CODE_SIGNING_ALLOWED=NO \
+    INFOPLIST_KEY_CFBundleDisplayName=FactoriOS build
 PRODUCT="$WORK/DerivedData/Build/Products/Release-iphoneos/FactorioPad.app"
 test -f "$PRODUCT/FactorioPad"
 mkdir -p "$WORK/Payload"

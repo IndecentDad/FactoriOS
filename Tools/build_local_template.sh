@@ -51,17 +51,51 @@ bash "$ROOT/Tools/build_factorios_template.sh" "$WORK/Source"
 python3 - "$ROOT/dist/FactoriOS-template.ipa" "$ROOT/dist/template-build.json" "$SHA" <<'PY'
 import json
 import pathlib
+import plistlib
 import sys
 import zipfile
 
 ipa, manifest, sha = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 assert ipa.is_file() and ipa.stat().st_size > 0, 'Missing or empty template IPA'
 assert json.loads(manifest.read_text())['source_sha'] == sha, 'Commit mismatch in manifest'
+
+def architectures(binary):
+    if len(binary) < 8:
+        return set()
+    magic = int.from_bytes(binary[:4], 'little')
+    if magic in (0xfeedface, 0xfeedfacf):
+        return {int.from_bytes(binary[4:8], 'little')}
+    fat_magic = int.from_bytes(binary[:4], 'big')
+    if fat_magic in (0xcafebabe, 0xcafebabf):
+        count = int.from_bytes(binary[4:8], 'big')
+        entry_size = 20 if fat_magic == 0xcafebabe else 32
+        if 8 + count * entry_size > len(binary):
+            return set()
+        return {
+            int.from_bytes(binary[8 + index * entry_size:12 + index * entry_size], 'big')
+            for index in range(count)
+        }
+    return set()
+
 with zipfile.ZipFile(ipa) as archive:
     assert archive.testzip() is None, 'Invalid IPA zip'
+    names = archive.namelist()
     assert not any('/FactorioData/' in n or '/FactorioGuest.framework/' in n
-                   for n in archive.namelist()), 'Personal game data found in template'
-print(f'Validated game-free template: {ipa} ({ipa.stat().st_size:,} bytes)')
+                   for n in names), 'Personal game data found in template'
+    prefix = 'Payload/FactorioPad.app/'
+    app_info = plistlib.loads(archive.read(prefix + 'Info.plist'))
+    assert app_info.get('CFBundleDisplayName') == 'FactoriOS', app_info.get('CFBundleDisplayName')
+    assert app_info.get('CFBundleIdentifier') == 'pl.adrian.FactorioPad', app_info.get('CFBundleIdentifier')
+    assert app_info.get('CFBundleShortVersionString') == '2.3.0', app_info.get('CFBundleShortVersionString')
+    executable = prefix + app_info['CFBundleExecutable']
+    compat = prefix + 'Frameworks/FactorioCompat.framework/FactorioCompat'
+    arm64 = 0x0100000c
+    assert arm64 in architectures(archive.read(executable)), f'{executable} has no arm64 slice'
+    assert arm64 in architectures(archive.read(compat)), f'{compat} has no arm64 slice'
+    markers = [n for n in names if n.endswith('/FactorioPadTemplate.json')]
+    assert len(markers) == 1, f'Expected one template marker, found {len(markers)}'
+    assert json.loads(archive.read(markers[0])) == {'format': 2}, 'Invalid template marker'
+print(f'Validated game-free FactoriOS 2.3.0 arm64 template: {ipa} ({ipa.stat().st_size:,} bytes)')
 PY
 
 if (( PUBLISH )); then
