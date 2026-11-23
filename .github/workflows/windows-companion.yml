@@ -1,6 +1,10 @@
 name: Build FactoriOS Windows Companion
 
 on:
+  workflow_run:
+    workflows: ["Build FactoriOS Template"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       source_ref:
@@ -13,18 +17,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: factorios-companion-${{ inputs.source_ref }}
+  group: factorios-companion-${{ inputs.source_ref || github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   build-windows:
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - name: Check out matching source tools
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ inputs.source_ref || github.event.workflow_run.head_branch || github.ref_name }}
           path: Source
       - uses: actions/setup-python@v5
         with:
@@ -47,7 +52,7 @@ jobs:
         id: release
         shell: bash
         env:
-          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REF: ${{ inputs.source_ref || github.event.workflow_run.head_branch || github.ref_name }}
         run: |
           set -euo pipefail
           TAG="FactoriOS-latest"
