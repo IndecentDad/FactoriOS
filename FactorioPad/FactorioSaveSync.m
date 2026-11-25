@@ -1,14 +1,274 @@
 #import "FactorioSaveSync.h"
 #import <CommonCrypto/CommonDigest.h>
-static NSString *const FPBookmarkKey=@"FactorioSaveFolderBookmark";
-static NSError *FPError(NSString *s){return [NSError errorWithDomain:@"FactorioSaveSync" code:1 userInfo:@{NSLocalizedDescriptionKey:s}];}
+static NSString *const FPBookmarkKey = @"FactorioSaveFolderBookmark";
+static NSError *FPError(NSString *s) {
+  return [NSError errorWithDomain:@"FactorioSaveSync"
+                             code:1
+                         userInfo:@{NSLocalizedDescriptionKey : s}];
+}
 @implementation FactorioSaveSync
-+ (BOOL)hasFolder{return [NSUserDefaults.standardUserDefaults dataForKey:FPBookmarkKey]!=nil;}
-+ (BOOL)saveFolder:(NSURL *)u error:(NSError **)e { BOOL access=[u startAccessingSecurityScopedResource]; if(!access){if(e)*e=FPError(@"FactoriOS cannot access the selected save folder. Choose it again in Files.");return NO;} NSData *b=[u bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark includingResourceValuesForKeys:nil relativeToURL:nil error:e];[u stopAccessingSecurityScopedResource];if(!b)return NO;[NSUserDefaults.standardUserDefaults setObject:b forKey:FPBookmarkKey];return YES; }
-+ (BOOL)synchronize:(NSError **)error { NSData *b=[NSUserDefaults.standardUserDefaults dataForKey:FPBookmarkKey];if(!b)return YES;NSError *e=nil;NSURL *shared=[NSURL URLByResolvingBookmarkData:b options:0 relativeToURL:nil bookmarkDataIsStale:nil error:&e];if(!shared){if(error)*error=e;return NO;}BOOL access=[shared startAccessingSecurityScopedResource];if(!access){if(error)*error=FPError(@"FactoriOS cannot access the selected save folder. Choose it again in Files.");return NO;}NSURL *docs=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;NSURL *local=[docs URLByAppendingPathComponent:@"saves" isDirectory:YES];BOOL ok=[self syncLocal:local shared:shared error:&e];[shared stopAccessingSecurityScopedResource];if(error)*error=e;return ok; }
-+ (NSDictionary<NSString *,NSURL *> *)files:(NSURL *)folder error:(NSError **)error {NSArray<NSURL *> *urls=[NSFileManager.defaultManager contentsOfDirectoryAtURL:folder includingPropertiesForKeys:@[NSURLIsRegularFileKey,NSURLIsSymbolicLinkKey] options:0 error:error];NSMutableDictionary *r=[NSMutableDictionary dictionary];for(NSURL *u in urls){if(![u.pathExtension.lowercaseString isEqual:@"zip"])continue;NSNumber *reg=nil,*sym=nil;[u getResourceValue:&reg forKey:NSURLIsRegularFileKey error:error];[u getResourceValue:&sym forKey:NSURLIsSymbolicLinkKey error:error];if(reg.boolValue&&!sym.boolValue)r[u.lastPathComponent]=u;}return r;}
-+ (NSString *)hash:(NSURL *)u date:(NSDate **)date error:(NSError **)error {__block NSString *result=nil;__block NSError *e=nil;__block NSDate *d=NSDate.distantPast;NSFileCoordinator *c=[NSFileCoordinator new];[c coordinateReadingItemAtURL:u options:0 error:&e byAccessor:^(NSURL *url){NSFileHandle *h=[NSFileHandle fileHandleForReadingFromURL:url error:&e];if(!h)return;CC_SHA256_CTX ctx;CC_SHA256_Init(&ctx);@try{while(YES){NSData *chunk=[h readDataOfLength:1024*1024];if(!chunk.length)break;CC_SHA256_Update(&ctx,chunk.bytes,(CC_LONG)chunk.length);}unsigned char digest[CC_SHA256_DIGEST_LENGTH];CC_SHA256_Final(digest,&ctx);result=[[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedStringWithOptions:0];NSDate *modified=nil;[url getResourceValue:&modified forKey:NSURLContentModificationDateKey error:nil];d=modified?:NSDate.distantPast;} @catch(NSException *x){e=FPError(x.reason?:@"Could not read save file.");}}];if(e&&error)*error=e;if(date)*date=d;return result;}
-+ (BOOL)copy:(NSURL *)src to:(NSURL *)dst error:(NSError **)error {BOOL exists=[NSFileManager.defaultManager fileExistsAtPath:dst.path];__block NSError *e=nil;NSFileCoordinator *c=[NSFileCoordinator new];[c coordinateReadingItemAtURL:src options:0 writingItemAtURL:dst options:exists?NSFileCoordinatorWritingForReplacing:0 error:&e byAccessor:^(NSURL *r,NSURL *w){NSURL *tmp=[w.URLByDeletingLastPathComponent URLByAppendingPathComponent:[NSString stringWithFormat:@".FactorioPad-%@.tmp",NSUUID.UUID.UUIDString]];if(![NSFileManager.defaultManager copyItemAtURL:r toURL:tmp error:&e])return;if(exists){if(![NSFileManager.defaultManager replaceItemAtURL:w withItemAtURL:tmp backupItemName:nil options:0 resultingItemURL:nil error:&e])[NSFileManager.defaultManager removeItemAtURL:tmp error:nil];}else if(![NSFileManager.defaultManager moveItemAtURL:tmp toURL:w error:&e])[NSFileManager.defaultManager removeItemAtURL:tmp error:nil];}];if(e&&error)*error=e;return e==nil;}
-+ (BOOL)syncLocal:(NSURL *)local shared:(NSURL *)shared error:(NSError **)error {NSFileManager *fm=NSFileManager.defaultManager;if(![fm createDirectoryAtURL:local withIntermediateDirectories:YES attributes:nil error:error])return NO;if([local.URLByStandardizingPath isEqual:shared.URLByStandardizingPath])return YES;NSDictionary *lf=[self files:local error:error],*sf=[self files:shared error:error];if(!lf||!sf)return NO;NSURL *stateURL=[local.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"save-sync-state.json"];NSData *stateData=[NSData dataWithContentsOfURL:stateURL];NSMutableDictionary *state=stateData?[[NSJSONSerialization JSONObjectWithData:stateData options:NSJSONReadingMutableContainers error:nil] mutableCopy]:nil;state=state?:[NSMutableDictionary dictionary];if(![state[@"folder"] isEqual:shared.URLByStandardizingPath.path]){state=[@{@"folder":shared.URLByStandardizingPath.path,@"hashes":[NSMutableDictionary dictionary]} mutableCopy];}NSMutableDictionary *hashes=[state[@"hashes"] mutableCopy]?:[NSMutableDictionary dictionary];NSMutableSet *names=[NSMutableSet setWithArray:lf.allKeys];[names addObjectsFromArray:sf.allKeys];for(NSString *name in names){NSURL *l=lf[name],*s=sf[name];if(!s){NSString *h=[self hash:l date:nil error:error];if(!h||![self copy:l to:[shared URLByAppendingPathComponent:name] error:error])return NO;hashes[name]=h;continue;}if(!l){NSString *h=[self hash:s date:nil error:error];if(!h||![self copy:s to:[local URLByAppendingPathComponent:name] error:error])return NO;hashes[name]=h;continue;}NSDate *ld=nil,*sd=nil;NSString *lh=[self hash:l date:&ld error:error],*sh=[self hash:s date:&sd error:error];if(!lh||!sh)return NO;if([lh isEqual:sh]){hashes[name]=lh;continue;}if([hashes[name] isEqual:sh]){if(![self copy:l to:s error:error])return NO;hashes[name]=lh;continue;}if([hashes[name] isEqual:lh]){if(![self copy:s to:l error:error])return NO;hashes[name]=sh;continue;}BOOL newerLocal=[ld compare:sd]!=NSOrderedAscending;NSURL *older=newerLocal?s:l,*target=newerLocal?s:l;NSString *origin=newerLocal?@"Mac":@"iPad";NSString *stem=name.stringByDeletingPathExtension;NSISO8601DateFormatter *formatter=[NSISO8601DateFormatter new];NSString *date=[formatter stringFromDate:NSDate.date];date=[date stringByReplacingOccurrencesOfString:@":" withString:@"-"];NSString *conf=[NSString stringWithFormat:@"%@ (%@ conflict %@).zip",stem,origin,date];NSURL *cl=[local URLByAppendingPathComponent:conf],*cs=[shared URLByAppendingPathComponent:conf];if(![self copy:older to:cl error:error]||![self copy:cl to:cs error:error])return NO;if(![self copy:newerLocal?l:s to:target error:error])return NO;hashes[name]=newerLocal?lh:sh;}
-state[@"hashes"]=hashes;NSData *json=[NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingSortedKeys error:error];return json&&[json writeToURL:stateURL options:NSDataWritingAtomic error:error];}
++ (BOOL)hasFolder {
+  return [NSUserDefaults.standardUserDefaults dataForKey:FPBookmarkKey] != nil;
+}
++ (BOOL)saveFolder:(NSURL *)u error:(NSError **)e {
+  BOOL access = [u startAccessingSecurityScopedResource];
+  if (!access) {
+    if (e)
+      *e = FPError(@"FactoriOS cannot access the selected save folder. Choose "
+                   @"it again in Files.");
+    return NO;
+  }
+  NSData *b = [u bookmarkDataWithOptions:NSURLBookmarkCreationMinimalBookmark
+          includingResourceValuesForKeys:nil
+                           relativeToURL:nil
+                                   error:e];
+  [u stopAccessingSecurityScopedResource];
+  if (!b)
+    return NO;
+  [NSUserDefaults.standardUserDefaults setObject:b forKey:FPBookmarkKey];
+  return YES;
+}
++ (BOOL)synchronize:(NSError **)error {
+  NSData *b = [NSUserDefaults.standardUserDefaults dataForKey:FPBookmarkKey];
+  if (!b)
+    return YES;
+  NSError *e = nil;
+  NSURL *shared = [NSURL URLByResolvingBookmarkData:b
+                                            options:0
+                                      relativeToURL:nil
+                                bookmarkDataIsStale:nil
+                                              error:&e];
+  if (!shared) {
+    if (error)
+      *error = e;
+    return NO;
+  }
+  BOOL access = [shared startAccessingSecurityScopedResource];
+  if (!access) {
+    if (error)
+      *error = FPError(@"FactoriOS cannot access the selected save folder. "
+                       @"Choose it again in Files.");
+    return NO;
+  }
+  NSURL *docs =
+      [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory
+                                           inDomains:NSUserDomainMask]
+          .firstObject;
+  NSURL *local = [docs URLByAppendingPathComponent:@"saves" isDirectory:YES];
+  BOOL ok = [self syncLocal:local shared:shared error:&e];
+  [shared stopAccessingSecurityScopedResource];
+  if (error)
+    *error = e;
+  return ok;
+}
++ (NSDictionary<NSString *, NSURL *> *)files:(NSURL *)folder
+                                       error:(NSError **)error {
+  NSArray<NSURL *> *urls = [NSFileManager.defaultManager
+        contentsOfDirectoryAtURL:folder
+      includingPropertiesForKeys:@[
+        NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey
+      ]
+                         options:0
+                           error:error];
+  NSMutableDictionary *r = [NSMutableDictionary dictionary];
+  for (NSURL *u in urls) {
+    if (![u.pathExtension.lowercaseString isEqual:@"zip"])
+      continue;
+    NSNumber *reg = nil, *sym = nil;
+    [u getResourceValue:&reg forKey:NSURLIsRegularFileKey error:error];
+    [u getResourceValue:&sym forKey:NSURLIsSymbolicLinkKey error:error];
+    if (reg.boolValue && !sym.boolValue)
+      r[u.lastPathComponent] = u;
+  }
+  return r;
+}
++ (NSString *)hash:(NSURL *)u date:(NSDate **)date error:(NSError **)error {
+  __block NSString *result = nil;
+  __block NSError *e = nil;
+  __block NSDate *d = NSDate.distantPast;
+  NSFileCoordinator *c = [NSFileCoordinator new];
+  [c coordinateReadingItemAtURL:u
+                        options:0
+                          error:&e
+                     byAccessor:^(NSURL *url) {
+                       NSFileHandle *h =
+                           [NSFileHandle fileHandleForReadingFromURL:url
+                                                               error:&e];
+                       if (!h)
+                         return;
+                       CC_SHA256_CTX ctx;
+                       CC_SHA256_Init(&ctx);
+                       @try {
+                         while (YES) {
+                           NSData *chunk = [h readDataOfLength:1024 * 1024];
+                           if (!chunk.length)
+                             break;
+                           CC_SHA256_Update(&ctx, chunk.bytes,
+                                            (CC_LONG)chunk.length);
+                         }
+                         unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+                         CC_SHA256_Final(digest, &ctx);
+                         result = [[NSData dataWithBytes:digest
+                                                  length:sizeof(digest)]
+                             base64EncodedStringWithOptions:0];
+                         NSDate *modified = nil;
+                         [url getResourceValue:&modified
+                                        forKey:NSURLContentModificationDateKey
+                                         error:nil];
+                         d = modified ?: NSDate.distantPast;
+                       } @catch (NSException *x) {
+                         e = FPError(x.reason ?: @"Could not read save file.");
+                       }
+                     }];
+  if (e && error)
+    *error = e;
+  if (date)
+    *date = d;
+  return result;
+}
++ (BOOL)copy:(NSURL *)src to:(NSURL *)dst error:(NSError **)error {
+  BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:dst.path];
+  __block NSError *e = nil;
+  NSFileCoordinator *c = [NSFileCoordinator new];
+  [c coordinateReadingItemAtURL:src
+                        options:0
+               writingItemAtURL:dst
+                        options:exists ? NSFileCoordinatorWritingForReplacing
+                                       : 0
+                          error:&e
+                     byAccessor:^(NSURL *r, NSURL *w) {
+                       NSURL *tmp = [w.URLByDeletingLastPathComponent
+                           URLByAppendingPathComponent:
+                               [NSString
+                                   stringWithFormat:@".FactorioPad-%@.tmp",
+                                                    NSUUID.UUID.UUIDString]];
+                       if (![NSFileManager.defaultManager copyItemAtURL:r
+                                                                  toURL:tmp
+                                                                  error:&e])
+                         return;
+                       if (exists) {
+                         if (![NSFileManager.defaultManager
+                                 replaceItemAtURL:w
+                                    withItemAtURL:tmp
+                                   backupItemName:nil
+                                          options:0
+                                 resultingItemURL:nil
+                                            error:&e])
+                           [NSFileManager.defaultManager removeItemAtURL:tmp
+                                                                   error:nil];
+                       } else if (![NSFileManager.defaultManager
+                                      moveItemAtURL:tmp
+                                              toURL:w
+                                              error:&e])
+                         [NSFileManager.defaultManager removeItemAtURL:tmp
+                                                                 error:nil];
+                     }];
+  if (e && error)
+    *error = e;
+  return e == nil;
+}
++ (BOOL)syncLocal:(NSURL *)local
+           shared:(NSURL *)shared
+            error:(NSError **)error {
+  NSFileManager *fm = NSFileManager.defaultManager;
+  if (![fm createDirectoryAtURL:local
+          withIntermediateDirectories:YES
+                           attributes:nil
+                                error:error])
+    return NO;
+  if ([local.URLByStandardizingPath isEqual:shared.URLByStandardizingPath])
+    return YES;
+  NSDictionary *lf = [self files:local error:error], *sf = [self files:shared
+                                                                 error:error];
+  if (!lf || !sf)
+    return NO;
+  NSURL *stateURL = [local.URLByDeletingLastPathComponent
+      URLByAppendingPathComponent:@"save-sync-state.json"];
+  NSData *stateData = [NSData dataWithContentsOfURL:stateURL];
+  NSMutableDictionary *state =
+      stateData ? [[NSJSONSerialization
+                      JSONObjectWithData:stateData
+                                 options:NSJSONReadingMutableContainers
+                                   error:nil] mutableCopy]
+                : nil;
+  state = state ?: [NSMutableDictionary dictionary];
+  if (![state[@"folder"] isEqual:shared.URLByStandardizingPath.path]) {
+    state = [@{
+      @"folder" : shared.URLByStandardizingPath.path,
+      @"hashes" : [NSMutableDictionary dictionary]
+    } mutableCopy];
+  }
+  NSMutableDictionary *hashes =
+      [state[@"hashes"] mutableCopy] ?: [NSMutableDictionary dictionary];
+  NSMutableSet *names = [NSMutableSet setWithArray:lf.allKeys];
+  [names addObjectsFromArray:sf.allKeys];
+  for (NSString *name in names) {
+    NSURL *l = lf[name], *s = sf[name];
+    if (!s) {
+      NSString *h = [self hash:l date:nil error:error];
+      if (!h || ![self copy:l
+                         to:[shared URLByAppendingPathComponent:name]
+                      error:error])
+        return NO;
+      hashes[name] = h;
+      continue;
+    }
+    if (!l) {
+      NSString *h = [self hash:s date:nil error:error];
+      if (!h || ![self copy:s
+                         to:[local URLByAppendingPathComponent:name]
+                      error:error])
+        return NO;
+      hashes[name] = h;
+      continue;
+    }
+    NSDate *ld = nil, *sd = nil;
+    NSString *lh = [self hash:l date:&ld error:error], *sh = [self hash:s
+                                                                   date:&sd
+                                                                  error:error];
+    if (!lh || !sh)
+      return NO;
+    if ([lh isEqual:sh]) {
+      hashes[name] = lh;
+      continue;
+    }
+    if ([hashes[name] isEqual:sh]) {
+      if (![self copy:l to:s error:error])
+        return NO;
+      hashes[name] = lh;
+      continue;
+    }
+    if ([hashes[name] isEqual:lh]) {
+      if (![self copy:s to:l error:error])
+        return NO;
+      hashes[name] = sh;
+      continue;
+    }
+    BOOL newerLocal = [ld compare:sd] != NSOrderedAscending;
+    NSURL *older = newerLocal ? s : l, *target = newerLocal ? s : l;
+    NSString *origin = newerLocal ? @"Mac" : @"iPad";
+    NSString *stem = name.stringByDeletingPathExtension;
+    NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    NSString *date = [formatter stringFromDate:NSDate.date];
+    date = [date stringByReplacingOccurrencesOfString:@":" withString:@"-"];
+    NSString *conf = [NSString
+        stringWithFormat:@"%@ (%@ conflict %@).zip", stem, origin, date];
+    NSURL *cl = [local URLByAppendingPathComponent:conf],
+          *cs = [shared URLByAppendingPathComponent:conf];
+    if (![self copy:older to:cl error:error] || ![self copy:cl
+                                                         to:cs
+                                                      error:error])
+      return NO;
+    if (![self copy:newerLocal ? l : s to:target error:error])
+      return NO;
+    hashes[name] = newerLocal ? lh : sh;
+  }
+  state[@"hashes"] = hashes;
+  NSData *json = [NSJSONSerialization dataWithJSONObject:state
+                                                 options:NSJSONWritingSortedKeys
+                                                   error:error];
+  return json && [json writeToURL:stateURL
+                          options:NSDataWritingAtomic
+                            error:error];
+}
 @end
