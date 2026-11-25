@@ -11,7 +11,8 @@
 
 ## Outstanding
 
-- Not run on simulator/device. Physical Duo viewport, Metal drawable, touch alignment, and launch with a personal packaged FactorioGuest/FactorioData remain unverified.
+- Not run on simulator/device. The Windows host currently detects no iPhone, and PlumeImpactor is not callable there. Physical Duo viewport, Metal drawable, touch alignment, and gameplay with the prepared private 2.1.24 package remain unverified.
 - Full Swift touch-controls guide/palette and some custom controller/UI behavior are not yet at parity. External-display scene routing has not been validated in the new UIKit shell.
 - The companion `package_ipa.py template` accepted and reprocessed the final IPA to another validated game-free package. `Tests/test_companion.py` could not run because the selected Windows Python environment lacks PyInstaller; no package was installed.
-- Keep stable release and `main` untouched. Next: finish the missing UI/input parity, run a signed private IPA through the existing companion, then test on iPhone Duo and an external display before considering any stable release update.
+- Prepared a private local device package at `F:\FactoriOS\dist\private-duo-test-2.1.24\` from the existing desktop DMG. Both embedded guest and separate `FactorioData` report version 2.1.24. This folder is ignored and was not committed or pushed.
+- Keep stable release and `main` untouched. Next: finish the missing UI/input parity, run a signed private IPA through the existing companion, connect the iPhone Duo to Windows, sign/install the private package with PlumeImpactor, capture the scene/window/safe/game/drawable geometry logs, then test gameplay/input and an external display before considering any stable release update.
