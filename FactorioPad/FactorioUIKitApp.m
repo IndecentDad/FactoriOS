@@ -1,4 +1,5 @@
 #import "FactorioControllerBridge.h"
+#import "FactorioCursorView.h"
 #import "FactorioKeyboardBridge.h"
 #import "FactorioLoader.h"
 #import "FactorioMetalHost.h"
@@ -19,11 +20,15 @@
 @end
 @class FactorioGameView;
 @interface FactorioGameController : UIViewController
+@property(nonatomic, readonly) BOOL prefersPointerLocked;
 @property(nonatomic, strong) FactorioGameView *gameView;
 @property(nonatomic, strong) FactorioTouchUIKit *touchPad;
 @end
 
-@interface FactorioGameView : UIView
+@interface FactorioGameView : UIView <UIPointerInteractionDelegate>
+@property(nonatomic, strong) FactorioCursorView *cursorView;
+@property(nonatomic, strong) CADisplayLink *cursorDisplayLink;
+@property(nonatomic, strong) UIPointerInteraction *pointerInteraction;
 @property(nonatomic, strong) NSMutableSet<NSNumber *> *pressedKeys;
 @property(nonatomic, strong) NSMutableArray<GCMouse *> *mice;
 @property(nonatomic) CGPoint pointerPosition;
@@ -39,6 +44,17 @@
     self.pressedKeys = [NSMutableSet set];
     self.mice = [NSMutableArray array];
     self.multipleTouchEnabled = YES;
+    self.cursorView =
+        [[FactorioCursorView alloc] initWithFrame:CGRectMake(0, 0, 18, 23)];
+    [self addSubview:self.cursorView];
+    self.pointerInteraction =
+        [[UIPointerInteraction alloc] initWithDelegate:self];
+    [self addInteraction:self.pointerInteraction];
+    self.cursorDisplayLink =
+        [CADisplayLink displayLinkWithTarget:self
+                                    selector:@selector(updateControllerCursor)];
+    [self.cursorDisplayLink addToRunLoop:NSRunLoop.mainRunLoop
+                                 forMode:NSRunLoopCommonModes];
     UIHoverGestureRecognizer *h = [[UIHoverGestureRecognizer alloc]
         initWithTarget:self
                 action:@selector(pointerHovered:)];
@@ -61,6 +77,28 @@
   FactorioControllerBridgeSetCursorPosition(p.x, p.y);
   FactorioMouseMove((int)lrint(p.x), (int)lrint(p.y), (int)lrint(p.x - old.x),
                     (int)lrint(p.y - old.y));
+}
+- (void)updateControllerCursor {
+  BOOL active = UIApplication.sharedApplication.applicationState ==
+                UIApplicationStateActive;
+  BOOL native = FactorioLoader.usesNativeController;
+  BOOL mouse = GCMouse.mice.count > 0;
+  BOOL hiddenByGame = native && FactorioMouseCursorVisibility() == 0;
+  self.cursorView.hidden = !active || hiddenByGame || (!native && !mouse);
+  CGPoint p = FactorioControllerBridgeGetCursorPosition();
+  self.cursorView.frame = CGRectMake(p.x, p.y, 18, 23);
+}
+- (UIPointerRegion *)pointerInteraction:(UIPointerInteraction *)interaction
+                       regionForRequest:(UIPointerRegionRequest *)request
+                          defaultRegion:(UIPointerRegion *)region {
+  return region;
+}
+- (UIPointerStyle *)pointerInteraction:(UIPointerInteraction *)interaction
+                        styleForRegion:(UIPointerRegion *)region {
+  if (FactorioLoader.usesNativeController &&
+      FactorioMouseCursorVisibility() == 0)
+    return UIPointerStyle.hiddenPointerStyle;
+  return nil;
 }
 - (void)pointerHovered:(UIHoverGestureRecognizer *)g {
   if (g.state == UIGestureRecognizerStateBegan ||
@@ -142,6 +180,10 @@
 - (BOOL)canBecomeFirstResponder {
   return YES;
 }
+- (void)dealloc {
+  [self.cursorDisplayLink invalidate];
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 - (void)didMoveToWindow {
   [super didMoveToWindow];
   self.contentScaleFactor = self.window.windowScene.screen.scale;
@@ -159,6 +201,8 @@
   FactorioControllerBridgeSetViewportSize(self.bounds.size.width,
                                           self.bounds.size.height);
   FactorioTouchUpdateWindowSize();
+  [self bringSubviewToFront:self.cursorView];
+  [self updateControllerCursor];
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
   for (UITouch *t in ts) {
@@ -232,6 +276,9 @@
 - (void)pressesCancelled:(NSSet<UIPress *> *)ps withEvent:(UIPressesEvent *)e {
   [self pressesEnded:ps withEvent:e];
 }
+@end
+
+@interface FactorioNavigationController : UINavigationController
 @end
 
 @interface FactorioHomeController : UIViewController <UIDocumentPickerDelegate>
@@ -396,6 +443,27 @@
 @end
 
 @implementation FactorioGameController
+- (BOOL)prefersPointerLocked {
+  if (GCMouse.mice.count == 0)
+    return NO;
+  if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad &&
+      FactorioLoader.usesNativeController)
+    return UIScreen.screens.count == 1;
+  return YES;
+}
+- (UIRectEdge)preferredScreenEdgesDeferringSystemGestures {
+  return UIRectEdgeBottom | UIRectEdgeRight;
+}
+- (BOOL)prefersHomeIndicatorAutoHidden {
+  return YES;
+}
+- (BOOL)prefersStatusBarHidden {
+  return YES;
+}
+- (void)pointerConfigurationChanged:(NSNotification *)n {
+  [self setNeedsUpdateOfPrefersPointerLocked];
+  [self.navigationController setNeedsUpdateOfPrefersPointerLocked];
+}
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
   return UIInterfaceOrientationMaskLandscape;
 }
@@ -426,6 +494,15 @@
     [weakSelf.navigationController popViewControllerAnimated:YES];
   };
   [self.view addSubview:self.touchPad];
+  for (NSString *name in @[
+         UIScreenDidConnectNotification, UIScreenDidDisconnectNotification,
+         GCMouseDidConnectNotification, GCMouseDidDisconnectNotification
+       ])
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(pointerConfigurationChanged:)
+               name:name
+             object:nil];
   [NSLayoutConstraint activateConstraints:@[
     [self.touchPad.leadingAnchor
         constraintEqualToAnchor:self.view.leadingAnchor],
@@ -436,8 +513,14 @@
   ]];
   self.navigationController.navigationBarHidden = YES;
 }
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
 - (void)viewDidAppear:(BOOL)animated {
   [super viewDidAppear:animated];
+  [self setNeedsUpdateOfPrefersPointerLocked];
+  [self setNeedsUpdateOfHomeIndicatorAutoHidden];
+  [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures];
   UIView *v = self.view.subviews.firstObject;
   [v becomeFirstResponder];
   FactorioControllerBridgeSetActive(YES);
@@ -483,6 +566,15 @@
 }
 @end
 
+@implementation FactorioNavigationController
+- (BOOL)prefersPointerLocked {
+  UIViewController *top = self.topViewController;
+  return [top isKindOfClass:FactorioGameController.class]
+             ? ((FactorioGameController *)top).prefersPointerLocked
+             : NO;
+}
+@end
+
 @implementation FactorioAppDelegate
 - (BOOL)application:(UIApplication *)a
     didFinishLaunchingWithOptions:(NSDictionary *)o {
@@ -515,7 +607,7 @@
     return;
   UIWindowScene *s = (UIWindowScene *)scene;
   self.window = [[UIWindow alloc] initWithWindowScene:s];
-  self.window.rootViewController = [[UINavigationController alloc]
+  self.window.rootViewController = [[FactorioNavigationController alloc]
       initWithRootViewController:[FactorioHomeController new]];
   [self.window makeKeyAndVisible];
   if (@available(iOS 16.0, *)) {
