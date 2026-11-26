@@ -83,7 +83,12 @@ def build_compat() -> pathlib.Path:
             "-current_version", "2.3.0", "-compatibility_version", "1.0", "-undefined", "error",
             "-lSystem", "-lobjc"]
     for name in FRAMEWORKS:
-        args += ["-framework", name]
+        # FactorioGuest's original macOS IOKit imports still bind to the
+        # FactorioCompat dylib. Reexport the real iOS IOKit API through that
+        # dylib while keeping local shims for unavailable macOS-only symbols
+        # (such as IODisplayCreateInfoDictionary). This preserves the guest's
+        # existing library ordinals; dyld can follow LC_REEXPORT_DYLIB.
+        args += ["-reexport_framework" if name == "IOKit" else "-framework", name]
     run(args + ["-o", str(binary), *map(str, objects)])
     verify_macho(binary)
     verify_dependencies(binary)
