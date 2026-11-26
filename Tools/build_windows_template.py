@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build and validate the game-free FactoriOS iOS template with Windows LLVM."""
 from __future__ import annotations
-import argparse, json, os, pathlib, plistlib, shutil, subprocess, sys, zipfile
+import argparse, json, os, pathlib, plistlib, shutil, struct, subprocess, sys, zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SDK = pathlib.Path(os.environ.get("FACTORIOS_IOS_SDK", r"F:\NXNative\1_Development\SDKs\Xcode_27.2\iPhoneOS.sdk"))
@@ -42,6 +42,45 @@ def verify_dependencies(binary: pathlib.Path, expected: str | None = None) -> No
         raise RuntimeError(f"{binary.name} does not link {expected}:\n{details}")
     if "FactorioGuest" in details:
         raise RuntimeError(f"game guest was unexpectedly linked into {binary.name}")
+
+
+def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
+    """Fail before packaging if required runtime globals or IOKit reexport are absent."""
+    nm = LLVM / "llvm-nm.exe"
+    exports = run([str(nm), "--extern-only", "--defined-only", str(binary)], quiet=True)
+    public = {line.split()[-1] for line in exports.splitlines() if line.split()}
+    required = {
+        "_kUTTagClassMIMEType",
+        "_kUTTypeUTF8PlainText",
+        "_OBJC_CLASS_$_NSColor",
+    }
+    missing = sorted(required - public)
+    if missing:
+        raise RuntimeError(f"FactorioCompat required runtime exports absent: {missing}")
+
+    raw = binary.read_bytes()
+    if len(raw) < 32 or struct.unpack_from("<I", raw)[0] != 0xFEEDFACF:
+        raise RuntimeError("Expected a thin 64-bit FactorioCompat Mach-O")
+    ncmds, sizeofcmds = struct.unpack_from("<II", raw, 16)
+    pos, end = 32, 32 + sizeofcmds
+    reexports = []
+    for _ in range(ncmds):
+        if pos + 8 > min(len(raw), end):
+            raise RuntimeError("Malformed FactorioCompat load command")
+        cmd, length = struct.unpack_from("<II", raw, pos)
+        if length < 8 or pos + length > min(len(raw), end):
+            raise RuntimeError("Malformed FactorioCompat load command length")
+        if cmd == 0x8000001F:  # LC_REEXPORT_DYLIB
+            offset = struct.unpack_from("<I", raw, pos + 8)[0]
+            if not 24 <= offset < length:
+                raise RuntimeError("Malformed IOKit reexport path")
+            reexports.append(raw[pos+offset:pos+length].split(b"\\0", 1)[0].decode("utf-8"))
+        pos += length
+    if pos != end or not any(path.endswith("/IOKit.framework/IOKit") for path in reexports):
+        raise RuntimeError(f"Native IOKit LC_REEXPORT_DYLIB missing: {reexports}")
+
+    print("validated FactorioCompat exports: NSColor, legacy UTType globals")
+    print("validated native IOKit reexport: " + ", ".join(reexports))
 
 
 def compile_sources(sources: list[pathlib.Path], output: pathlib.Path, cache: pathlib.Path) -> list[pathlib.Path]:
@@ -92,6 +131,7 @@ def build_compat() -> pathlib.Path:
     run(args + ["-o", str(binary), *map(str, objects)])
     verify_macho(binary)
     verify_dependencies(binary)
+    verify_compat_runtime_exports(binary)
     info = {"CFBundleExecutable": "FactorioCompat", "CFBundleIdentifier": "pl.adrian.FactorioCompat",
             "CFBundleName": "FactorioCompat", "CFBundlePackageType": "FMWK",
             "CFBundleInfoDictionaryVersion": "6.0", "CFBundleShortVersionString": "2.3.0",
