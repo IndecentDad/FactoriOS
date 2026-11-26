@@ -74,7 +74,7 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
             offset = struct.unpack_from("<I", raw, pos + 8)[0]
             if not 24 <= offset < length:
                 raise RuntimeError("Malformed IOKit reexport path")
-            reexports.append(raw[pos+offset:pos+length].split(b"\\0", 1)[0].decode("utf-8"))
+            reexports.append(raw[pos+offset:pos+length].split(b"\0", 1)[0].decode("utf-8"))
         pos += length
     if pos != end or not any(path.endswith("/IOKit.framework/IOKit") for path in reexports):
         raise RuntimeError(f"Native IOKit LC_REEXPORT_DYLIB missing: {reexports}")
