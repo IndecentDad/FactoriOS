@@ -4063,6 +4063,130 @@ EMPTY_APPKIT_CLASS(NSOpenGLPixelFormat)
 EMPTY_APPKIT_CLASS(NSPasteboardItem)
 EMPTY_APPKIT_CLASS(NSTrackingArea)
 
-EMPTY_APPKIT_CLASS(FactorioNSColor)
+// A compiler @compatibility_alias does not export OBJC_CLASS_$_NSColor.
+// FactorioGuest binds to the real Objective-C runtime class named NSColor.
+// Keep a real subclass with UIKit-backed color values instead of an alias or
+// an otherwise empty class.
+@interface NSColor : NSObject
+@property (nonatomic, strong) UIColor *fpUIKitColor;
++ (instancetype)colorWithDeviceRed:(CGFloat)red green:(CGFloat)green
+                             blue:(CGFloat)blue alpha:(CGFloat)alpha;
++ (instancetype)colorWithCalibratedRed:(CGFloat)red green:(CGFloat)green
+                                 blue:(CGFloat)blue alpha:(CGFloat)alpha;
++ (instancetype)colorWithSRGBRed:(CGFloat)red green:(CGFloat)green
+                            blue:(CGFloat)blue alpha:(CGFloat)alpha;
++ (instancetype)colorWithDeviceWhite:(CGFloat)white alpha:(CGFloat)alpha;
++ (instancetype)colorWithCalibratedWhite:(CGFloat)white alpha:(CGFloat)alpha;
++ (instancetype)whiteColor;
++ (instancetype)blackColor;
++ (instancetype)clearColor;
++ (instancetype)redColor;
++ (instancetype)greenColor;
++ (instancetype)blueColor;
++ (instancetype)colorWithCGColor:(CGColorRef)cgColor;
+- (instancetype)initWithUIKitColor:(UIColor *)color;
+- (CGColorRef)CGColor;
+- (CGFloat)redComponent;
+- (CGFloat)greenComponent;
+- (CGFloat)blueComponent;
+- (CGFloat)alphaComponent;
+- (CGFloat)whiteComponent;
+- (void)getRed:(CGFloat *)red green:(CGFloat *)green
+          blue:(CGFloat *)blue alpha:(CGFloat *)alpha;
+- (NSColorSpace *)colorSpace;
+- (instancetype)colorUsingColorSpace:(NSColorSpace *)space;
+@end
 
-@compatibility_alias NSColor FactorioNSColor;
+@implementation NSColor
+
+- (instancetype)initWithUIKitColor:(UIColor *)color
+{
+    if ((self = [super init])) {
+        _fpUIKitColor = color ?: UIColor.clearColor;
+    }
+    return self;
+}
+
++ (instancetype)colorWithUIKitColor:(UIColor *)color
+{
+    return [[self alloc] initWithUIKitColor:color];
+}
+
++ (instancetype)colorWithDeviceRed:(CGFloat)red green:(CGFloat)green
+                             blue:(CGFloat)blue alpha:(CGFloat)alpha
+{
+    return [self colorWithUIKitColor:[UIColor colorWithRed:red green:green
+                                                       blue:blue alpha:alpha]];
+}
+
++ (instancetype)colorWithCalibratedRed:(CGFloat)red green:(CGFloat)green
+                                 blue:(CGFloat)blue alpha:(CGFloat)alpha
+{
+    return [self colorWithDeviceRed:red green:green blue:blue alpha:alpha];
+}
+
++ (instancetype)colorWithSRGBRed:(CGFloat)red green:(CGFloat)green
+                            blue:(CGFloat)blue alpha:(CGFloat)alpha
+{
+    return [self colorWithDeviceRed:red green:green blue:blue alpha:alpha];
+}
+
++ (instancetype)colorWithDeviceWhite:(CGFloat)white alpha:(CGFloat)alpha
+{
+    return [self colorWithUIKitColor:[UIColor colorWithWhite:white alpha:alpha]];
+}
+
++ (instancetype)colorWithCalibratedWhite:(CGFloat)white alpha:(CGFloat)alpha
+{
+    return [self colorWithDeviceWhite:white alpha:alpha];
+}
+
++ (instancetype)whiteColor { return [self colorWithUIKitColor:UIColor.whiteColor]; }
++ (instancetype)blackColor { return [self colorWithUIKitColor:UIColor.blackColor]; }
++ (instancetype)clearColor { return [self colorWithUIKitColor:UIColor.clearColor]; }
++ (instancetype)redColor { return [self colorWithUIKitColor:UIColor.redColor]; }
++ (instancetype)greenColor { return [self colorWithUIKitColor:UIColor.greenColor]; }
++ (instancetype)blueColor { return [self colorWithUIKitColor:UIColor.blueColor]; }
+
++ (instancetype)colorWithCGColor:(CGColorRef)cgColor
+{
+    if (!cgColor) return nil;
+    return [self colorWithUIKitColor:[UIColor colorWithCGColor:cgColor]];
+}
+
+- (CGColorRef)CGColor { return self.fpUIKitColor.CGColor; }
+- (void)getRed:(CGFloat *)red green:(CGFloat *)green
+          blue:(CGFloat *)blue alpha:(CGFloat *)alpha
+{
+    CGFloat r = 0, g = 0, b = 0, a = 0;
+    if (![self.fpUIKitColor getRed:&r green:&g blue:&b alpha:&a]) {
+        CGFloat w = 0;
+        [self.fpUIKitColor getWhite:&w alpha:&a];
+        r = g = b = w;
+    }
+    if (red) *red = r;
+    if (green) *green = g;
+    if (blue) *blue = b;
+    if (alpha) *alpha = a;
+}
+
+- (CGFloat)redComponent { CGFloat r = 0; [self getRed:&r green:NULL blue:NULL alpha:NULL]; return r; }
+- (CGFloat)greenComponent { CGFloat g = 0; [self getRed:NULL green:&g blue:NULL alpha:NULL]; return g; }
+- (CGFloat)blueComponent { CGFloat b = 0; [self getRed:NULL green:NULL blue:&b alpha:NULL]; return b; }
+- (CGFloat)alphaComponent { CGFloat a = 0; [self getRed:NULL green:NULL blue:NULL alpha:&a]; return a; }
+- (CGFloat)whiteComponent
+{
+    CGFloat white = 0, alpha = 0;
+    if ([self.fpUIKitColor getWhite:&white alpha:&alpha]) return white;
+    CGFloat r = 0, g = 0, b = 0;
+    [self getRed:&r green:&g blue:&b alpha:NULL];
+    return (r + g + b) / 3.0;
+}
+
+- (NSColorSpace *)colorSpace { return [NSColorSpace sRGBColorSpace]; }
+- (instancetype)colorUsingColorSpace:(NSColorSpace *)space
+{
+    (void)space;
+    return self; // UIKit stores the same sRGB color components.
+}
+@end
