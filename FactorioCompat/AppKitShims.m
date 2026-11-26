@@ -1,6 +1,12 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <CoreFoundation/CoreFoundation.h>
+
+// Factorio's macOS CoreServices import is rebound to FactorioCompat on iOS.
+// This is a data symbol (CFStringRef), not a function or an NSString pointer.
+__attribute__((visibility("default")))
+const CFStringRef kUTTagClassMIMEType = CFSTR("public.mime-type");
 #include <string.h>
 #import "FactorioMetalHost.h"
 #import "FactorioTouchBridge.h"
