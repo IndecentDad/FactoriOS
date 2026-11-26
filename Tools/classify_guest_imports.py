@@ -231,9 +231,13 @@ def classify(ipa_path: Path, dmg: Path, sdk: Path,
                 "conclusion": "SDK candidate; verify correct iOS target/runtime" if sdk_hits
                               else "No matching public SDK stub found; requires further implementation/proof",
             })
+        ipa_digest = hashlib.sha256()
+        with ipa_path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                ipa_digest.update(chunk)
         payload = {
             "ipa": str(ipa_path),
-            "ipa_sha256": hashlib.sha256(ipa_path.read_bytes()).hexdigest(),
+            "ipa_sha256": ipa_digest.hexdigest(),
             "original_dmg": str(dmg),
             "library_ordinals": mapping,
             "missing_direct_export_count": len(missing),
