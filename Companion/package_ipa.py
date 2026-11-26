@@ -13,6 +13,13 @@ import sys
 import tempfile
 import zipfile
 
+# This standalone companion script lives outside Tools/, where the canonical
+# Mach-O patcher lives. Resolve it relative to this file, not the caller's cwd
+# or PYTHONPATH (which differs under Windows SSH).
+TOOLS_DIR = pathlib.Path(__file__).resolve().parents[1] / "Tools"
+if not (TOOLS_DIR / "patch_factorio.py").is_file():
+    raise FileNotFoundError(f"FactoriOS Mach-O patcher missing: {TOOLS_DIR / 'patch_factorio.py'}")
+sys.path.insert(0, str(TOOLS_DIR))
 from patch_factorio import CPU_TYPE_ARM64, MH_MAGIC_64, patch
 
 
