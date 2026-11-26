@@ -206,6 +206,7 @@ def main() -> int:
     p.add_argument("--inventory", action="store_true", help="Show bounded file/tool inventory, then exit")
     p.add_argument("--status", action="store_true", help="Read the last build stage and tail of its persistent log")
     p.add_argument("--dmg", type=Path, help="Original Factorio 2.1.24 Mac DMG")
+    p.add_argument("--template", type=Path, help="Reuse a successfully built game-free SDK 27.2 template instead of recompiling")
     p.add_argument("--seven-zip", type=Path, default=SEVEN_ZIP)
     args = p.parse_args()
     if args.status:
@@ -239,8 +240,23 @@ def main() -> int:
     private = DIST / f"private-duo-{tag}"
     logfile = DIST / "build_private_duo_logs" / f"{tag}.log"
     print(f"Starting build; persistent log: {logfile}", flush=True)
-    run_logged([sys.executable, str(ROOT / "Tools" / "build_windows_template.py"),
-                "--output", str(template)], "compile-and-template", tag, logfile)
+    if args.template:
+        template = args.template.resolve()
+        if not template.is_file():
+            raise FileNotFoundError(f"Existing template unavailable: {template}")
+        with zipfile.ZipFile(template) as existing_template:
+            if existing_template.testzip() is not None:
+                raise RuntimeError("Existing template failed ZIP CRC check")
+            names = existing_template.namelist()
+            if not any(name.endswith("/FactorioPadTemplate.json") for name in names):
+                raise RuntimeError("Existing template marker missing")
+            if any("FactorioGuest.framework" in name or "/FactorioData/" in name for name in names):
+                raise RuntimeError("Cannot reuse template containing private game assets")
+        print(f"Reusing existing game-free template: {template}", flush=True)
+        report_status("reuse-existing-template", "completed", tag, logfile, template=str(template))
+    else:
+        run_logged([sys.executable, str(ROOT / "Tools" / "build_windows_template.py"),
+                    "--output", str(template)], "compile-and-template", tag, logfile)
     run_logged([sys.executable, str(ROOT / "Companion" / "package_ipa.py"),
                 "dmg", str(template), str(dmg), str(private), str(args.seven_zip), "--no-data"],
                "repatch-guest-and-package-no-data", tag, logfile)
