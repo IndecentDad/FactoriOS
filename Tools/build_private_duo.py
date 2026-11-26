@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import hashlib
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -26,6 +27,67 @@ DIST = ROOT / "dist"
 SEVEN_ZIP = Path(r"C:\Program Files\7-Zip\7z.exe")
 LLVM = Path(os.environ.get("LLVM_BIN", r"C:\Program Files\LLVM\bin"))
 SKIP_FOLDERS = {"FactorioData", ".git", "node_modules", "Builds", "Objects", "ModuleCache"}
+STATUS_FILE = DIST / "build_private_duo_status.json"
+
+
+def show_status() -> int:
+    if not STATUS_FILE.is_file():
+        print(f"No recorded build status yet: {STATUS_FILE}", flush=True)
+        return 1
+    status = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    print(json.dumps(status, indent=2), flush=True)
+    log = Path(status.get("log", ""))
+    if log.is_file():
+        with log.open("rb") as stream:
+            stream.seek(0, 2)
+            stream.seek(max(0, stream.tell() - 8000))
+            excerpt = stream.read().decode("utf-8", errors="replace")
+        print("---- Latest build log ----", flush=True)
+        print(excerpt, flush=True)
+    return 0
+
+
+def report_status(stage: str, state: str, tag: str, logfile: Path, **extra: object) -> None:
+    DIST.mkdir(parents=True, exist_ok=True)
+    previous = {}
+    if STATUS_FILE.is_file():
+        try:
+            previous = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = {}
+    if previous.get("tag") != tag:
+        previous = {}
+    payload = {
+        **previous,
+        "tag": tag,
+        "pid": os.getpid(),
+        "stage": stage,
+        "state": state,
+        "log": str(logfile),
+        "updated": datetime.now().isoformat(timespec="seconds"),
+        **extra,
+    }
+    temp = STATUS_FILE.with_suffix(".json.tmp")
+    temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(temp, STATUS_FILE)
+    print(f"[{state.upper()}] {stage}; status={STATUS_FILE}; log={logfile}", flush=True)
+
+
+def run_logged(args: list[str], stage: str, tag: str, logfile: Path) -> None:
+    report_status(stage, "running", tag, logfile)
+    logfile.parent.mkdir(parents=True, exist_ok=True)
+    command = list(args)
+    if command[0] == sys.executable and len(command) > 1 and command[1] != "-u":
+        command.insert(1, "-u")  # flush subprocess progress while its stage is running
+    with logfile.open("a", encoding="utf-8") as output:
+        output.write(f"\n==== {datetime.now().isoformat()} {stage} ====\n")
+        output.flush()
+        completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
+                                   text=True, errors="replace")
+    if completed.returncode:
+        report_status(stage, "failed", tag, logfile, exit_code=completed.returncode)
+        raise RuntimeError(f"{stage} failed (exit {completed.returncode}); see {logfile}")
+    report_status(stage, "completed", tag, logfile)
 
 
 def run(args: list[str], *, accepted: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess[str]:
@@ -142,9 +204,12 @@ def verify_output(ipa_path: Path) -> tuple[str, str]:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inventory", action="store_true", help="Show bounded file/tool inventory, then exit")
+    p.add_argument("--status", action="store_true", help="Read the last build stage and tail of its persistent log")
     p.add_argument("--dmg", type=Path, help="Original Factorio 2.1.24 Mac DMG")
     p.add_argument("--seven-zip", type=Path, default=SEVEN_ZIP)
     args = p.parse_args()
+    if args.status:
+        return show_status()
     dmgs = discover_dmgs()
     if args.inventory:
         describe_host(dmgs)
@@ -172,16 +237,19 @@ def main() -> int:
     tag = f"ios27-routing-{timestamp}-{revision}"
     template = DIST / f"FactoriOS-template-{tag}.ipa"
     private = DIST / f"private-duo-{tag}"
-    print("Building a fresh game-free SDK 27.2 template")
-    run([sys.executable, str(ROOT / "Tools" / "build_windows_template.py"),
-         "--output", str(template)])
-    print("Extracting only the original Factorio executable and minimal version files")
-    run([sys.executable, str(ROOT / "Companion" / "package_ipa.py"),
-         "dmg", str(template), str(dmg), str(private), str(args.seven_zip), "--no-data"])
+    logfile = DIST / "build_private_duo_logs" / f"{tag}.log"
+    print(f"Starting build; persistent log: {logfile}", flush=True)
+    run_logged([sys.executable, str(ROOT / "Tools" / "build_windows_template.py"),
+                "--output", str(template)], "compile-and-template", tag, logfile)
+    run_logged([sys.executable, str(ROOT / "Companion" / "package_ipa.py"),
+                "dmg", str(template), str(dmg), str(private), str(args.seven_zip), "--no-data"],
+               "repatch-guest-and-package-no-data", tag, logfile)
     ipa = private / "FactorioPad.ipa"
+    report_status("validate-private-ipa", "running", tag, logfile, ipa=str(ipa))
     if not ipa.is_file() or (private / "FactorioData").exists():
         raise RuntimeError("Unexpected private build output; FactorioData must not be recreated")
     guest_sha, compat_sha = verify_output(ipa)
+    report_status("validate-private-ipa", "completed", tag, logfile, ipa=str(ipa))
     print(f"Private IPA: {ipa}")
     print(f"IPA SHA-256: {sha256_file(ipa)}")
     print(f"FactorioGuest SHA-256: {guest_sha}")
@@ -189,7 +257,8 @@ def main() -> int:
     print(f"Source: {revision}")
     print("FactorioData not accessed or regenerated.")
 
-    print("Auditing the final, exact private IPA")
+    print("Auditing the final, exact private IPA", flush=True)
+    report_status("audit-private-ipa", "running", tag, logfile, ipa=str(ipa))
     audit = subprocess.run(
         [sys.executable, str(ROOT / "Tools" / "audit_macho_imports.py"),
          "--ipa", str(ipa), "--report-dir", str(private / "audit")],
@@ -201,8 +270,10 @@ def main() -> int:
         print(f"BLOCKED: Audit returned {audit.returncode}. Private IPA is NOT ready for installation.",
               file=sys.stderr)
         print(f"Full audit: {private / 'audit-output.txt'}")
+        report_status("audit-private-ipa", "failed", tag, logfile, ipa=str(ipa), audit_exit_code=audit.returncode)
         return 2
-    print("Static audit passed. IPA remains unsigned: sign before installing.")
+    report_status("audit-private-ipa", "completed", tag, logfile, ipa=str(ipa))
+    print("Static audit passed. IPA remains unsigned: sign before installing.", flush=True)
     return 0
 
 
