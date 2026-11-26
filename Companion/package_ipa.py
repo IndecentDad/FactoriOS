@@ -230,23 +230,30 @@ def main():
     personal.add_argument("template", type=pathlib.Path)
     personal.add_argument("factorio_app", type=pathlib.Path)
     personal.add_argument("output", type=pathlib.Path)
+    personal.add_argument("--no-data", action="store_true", help="Repackage only FactorioGuest; preserve existing separate FactorioData.")
     dmg = commands.add_parser("dmg", help="Extract a Factorio DMG and prepare a personal IPA.")
     dmg.add_argument("template", type=pathlib.Path)
     dmg.add_argument("image", type=pathlib.Path)
     dmg.add_argument("output", type=pathlib.Path)
     dmg.add_argument("seven_zip", type=pathlib.Path)
+    dmg.add_argument("--no-data", action="store_true", help="Extract minimal inputs and package the guest without rebuilding FactorioData.")
     args = parser.parse_args()
     try:
         if args.command == "template":
             make_template(args.ipa, args.output)
             print(f"Game-free template ready: {args.output}")
         elif args.command == "dmg":
-            package_dmg(args.template, args.image, args.output, args.seven_zip)
+            package_dmg(args.template, args.image, args.output, args.seven_zip,
+                        include_data=not args.no_data)
             print("Your app is ready.", flush=True)
         else:
-            package(args.template, args.factorio_app, args.output)
+            package(args.template, args.factorio_app, args.output,
+                    include_data=not args.no_data)
             print(f"Private unsigned IPA: {args.output / 'FactorioPad.ipa'}")
-            print(f"Sideload the IPA with a tool that signs embedded frameworks. Transfer {args.output / 'FactorioData'} to your device, then select it in FactoriOS.")
+            if args.no_data:
+                print("Existing FactorioData is unchanged. Sideload the new IPA; retain the already imported game data.")
+            else:
+                print(f"Sideload the IPA with a tool that signs embedded frameworks. Transfer {args.output / 'FactorioData'} to your device, then select it in FactoriOS.")
     except (OSError, ValueError, RuntimeError, KeyError, TypeError,
             plistlib.InvalidFileException, struct.error, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         parser.exit(1, f"ERROR: {error}\n")
