@@ -7,6 +7,11 @@
 // This is a data symbol (CFStringRef), not a function or an NSString pointer.
 __attribute__((visibility("default")))
 const CFStringRef kUTTagClassMIMEType = CFSTR("public.mime-type");
+
+// Legacy CoreServices Uniform Type Identifier required by the guest.
+// Keep the exported symbol as CFStringRef data, not a function or NSString.
+__attribute__((visibility("default")))
+const CFStringRef kUTTypeUTF8PlainText = CFSTR("public.utf8-plain-text");
 #include <string.h>
 #import "FactorioMetalHost.h"
 #import "FactorioTouchBridge.h"
