@@ -44,6 +44,41 @@ def show_status() -> int:
             excerpt = stream.read().decode("utf-8", errors="replace")
         print("---- Latest build log ----", flush=True)
         print(excerpt, flush=True)
+    # The private IPA and its audit may exist even if the final stage failed.
+    # Surface both without rebuilding, uploading game content, or shell parsing.
+    ipa_value = status.get("ipa")
+    if ipa_value:
+        ipa = Path(ipa_value)
+        if ipa.is_file():
+            print(f"---- Existing private IPA ----\n{ipa}", flush=True)
+            print(f"IPA SHA-256: {sha256_file(ipa)}", flush=True)
+            try:
+                with zipfile.ZipFile(ipa) as archive:
+                    for suffix in (
+                        "/Frameworks/FactorioGuest.framework/FactorioGuest",
+                        "/Frameworks/FactorioCompat.framework/FactorioCompat",
+                    ):
+                        matches = [n for n in archive.namelist()
+                                   if n.startswith("Payload/") and n.endswith(suffix)]
+                        if len(matches) == 1:
+                            print(f"{Path(suffix).name} SHA-256: "
+                                  f"{sha256_zip_member(archive, matches[0])}", flush=True)
+                        else:
+                            print(f"Cannot uniquely locate embedded {suffix} (found {len(matches)})", flush=True)
+            except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+                print(f"IPA inspection error: {error}", flush=True)
+            audit_output = ipa.parent / "audit-output.txt"
+            if audit_output.is_file():
+                print(f"---- Full saved audit summary: {audit_output} ----", flush=True)
+                print(audit_output.read_text(encoding="utf-8", errors="replace")[-16000:], flush=True)
+            missing = ipa.parent / "audit" / "missing-strong-compat-exports.txt"
+            if missing.is_file():
+                names = [line.strip() for line in missing.read_text(
+                    encoding="utf-8", errors="replace").splitlines() if line.strip()]
+                print(f"---- Missing direct FactorioCompat exports: {len(names)} ----", flush=True)
+                print("\n".join(names[:200]), flush=True)
+        else:
+            print(f"Status references missing IPA: {ipa}", flush=True)
     return 0
 
 
@@ -281,7 +316,12 @@ def main() -> int:
         capture_output=True, text=True, errors="replace")
     (private / "audit-output.txt").write_text(
         audit.stdout + "\n" + audit.stderr, encoding="utf-8")
-    print(audit.stdout[-4000:])
+    with logfile.open("a", encoding="utf-8") as output:
+        output.write("\n==== Final private IPA audit ====\n")
+        output.write(audit.stdout + "\n" + audit.stderr + "\n")
+    print(audit.stdout[-12000:], flush=True)
+    if audit.stderr:
+        print(audit.stderr[-4000:], file=sys.stderr, flush=True)
     if audit.returncode:
         print(f"BLOCKED: Audit returned {audit.returncode}. Private IPA is NOT ready for installation.",
               file=sys.stderr)
