@@ -1,5 +1,13 @@
 # FactoriOS Project Status
 
+## iPad compatibility preservation (not yet compiled)
+
+- The original Swift/iPad app remains in the repo. Comparing main with the experiment shows no deleted or modified Swift UI files. The Xcode target's original device family is 1,2.
+- The Windows SDK 27.2 builder compiles C/Objective-C and substitutes a separate UIKit shell; it does NOT include the richer original Swift iPad UI. Do not treat it as a drop-in replacement.
+- Windows template generation previously omitted UIDeviceFamily. It now stamps [1,2] and UIRequiresFullScreen=false; the IPA metadata test requires these.
+- Xcode's automatically synchronized FactorioPad folder would include the new Windows-only main.m/UIKit files. The Xcode target now explicitly excludes the Windows shell files; a game-free build-boundary test checks this.
+- NO new IPA has been compiled for this metadata change, and the original Swift/iPad path has not been compiled with Xcode during this pass. Preserve known-good Duo IPA, original iPad build and installation, data/saves, and main. Never port all original Swift iPad features to Objective-C to fix an Info.plist error.
+
 ## Current milestone — Duo UI candidate ready for device validation
 
 - The original Factorio 2.1.24 guest launches on the physical unfolded iPhone Duo. Preserve rollback IPA SHA-256 `f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9`.
