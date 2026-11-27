@@ -1,102 +1,30 @@
-# FactoriOS Windows SDK 27.2 — Finish existing IPA audit status, then device test
+# FactoriOS Windows SDK 27.2 — Duo launch baseline and UI cleanup
 
-## ACTIVE TASK — do not stop after diagnosing
+## Current baseline
 
-Read root AGENTS.md. Continue implementing, testing and committing/pushing
-routine fixes autonomously in experiment/windows-native-ios27. No changes to
-main, stable releases, proprietary Factorio data, or user saves.
+- Repository: `F:\FactoriOS`, branch `experiment/windows-native-ios27`.
+- Verify the latest Git revision and worktree before beginning.
+- The Factorio 2.1.24 private build documented in the previous handoff has launched successfully on the physical iPhone Duo. Treat the working IPA and its embedded guest and compatibility framework as the known-good runtime baseline.
+- Preserve the working IPA, FactorioData, saves, main, and stable releases. Do not replace the baseline until a new candidate is validated on-device.
+- Host audit passed with exit code 0 and matching IPA SHA-256 `f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9`. Device launch is the runtime confirmation.
 
-The previous Windows experiment was **not** a minimal Duo-screen patch.
-It rewrote upstream Tools/patch_factorio.py to keep seven macOS frameworks
-as native iOS dependencies. The original Xcode build instead redirects their
-FactorioGuest Mach-O library ordinals to FactorioCompat and reexports native
-APIs through FactorioCompat. This is why repeated device builds failed on
-macOS-only symbols from native Foundation and CoreGraphics.
+## Next task — UI cleanup
 
-## Verified root-cause evidence
+Continue focused UI cleanup on `experiment/windows-native-ios27`. Begin by checking Git state, this handoff, and `docs/PROJECT_STATUS.md`. Preserve the confirmed launch baseline, Duo display geometry, Metal rendering, keyboard/controller support, touch controls, saves, and startup logging. Make small reversible changes, validate through the normal Windows SDK 27.2 workflow, and retain the current baseline IPA until a replacement is confirmed on the Duo.
 
-- Upstream MyNameIsArko/FactorioPad and IndecentDad/FactoriOS main have an
-  identical Tools/patch_factorio.py (Git blob 58bfe0afd0aaebdce60aac83a4c9b65ad12d710e).
-- The upstream SHIM_FRAMEWORKS set includes Foundation, CoreGraphics,
-  CoreVideo, Metal, CoreServices, IOKit, Security, CoreAudio, AudioToolbox
-  alongside the macOS-only frameworks.
-- Original FactorioCompat.xcconfig explicitly passes -reexport_framework
-  for those providers, as well as -reexport-lSystem.
-- Windows experiment previously removed Foundation, CoreGraphics, CoreVideo,
-  Metal, Security, CoreAudio, AudioToolbox from SHIM_FRAMEWORKS and only
-  reexported a few frameworks. Its specialized per-symbol fixes and narrower
-  audits hid rather than solved this mismatch.
-- Device logs confirmed FactorioGuest failed on a native Foundation
-  NSAppleEventManager import, then on a native CoreGraphics
-  kCGDisplayShowDuplicateLowResolutionModes import. Both are already
-  implemented by the existing FactorioCompat code.
-- The afccbc9 IPA was never cleared by the expanded native audit, which
-  Codex failed to inspect. The newest device logs and build identity show
-  it progressed past the first bad binding but failed on the second.
-- The private FactorioGuest version embedded in the package was verified
-  as 2.1.24. No evidence currently suggests an executable/GameData version
-  mismatch as the cause.
+## Autonomous development expectations
 
-## Source changes now committed (pull latest, don't rely on afccbc9)
+Act as the project developer. When a build, test, audit, packaging step, or command fails, inspect the complete current-run evidence, identify the cause, correct the code or tooling, and rerun before continuing. Do not stop at an intermediate error or return an investigation-only report. Continue through routine failures without asking the user to relay fixes. Stop for a genuine external dependency such as physical-device access or credentials, and state the exact boundary.
 
-1. Restored Tools/patch_factorio.py **byte-for-byte from main/upstream**.
-   It no longer calls a separate targeted rebinder.
-2. Deleted obsolete Tools/rebind_guest_symbols.py and its synthetic tests.
-3. Tools/build_windows_template.py derives REEXPORT_FRAMEWORKS from the
-   restored patcher's SHIM_FRAMEWORKS and reexports all native SDK
-   providers that the original patcher rewrites. It also reexports
-   MobileCoreServices for legacy UTType C functions, and uses CoreServices
-   when the extracted SDK contains a linkable stub.
-4. Tools/build_windows_template.py preflights the actual LC_REEXPORT_DYLIB
-   commands for the entire set of required native providers.
-5. Tools/build_private_duo.py now validates **upstream routing** (guest loads
-   FactorioCompat, not native Foundation/CoreGraphics/etc.), retaining
-   symbol-specific protection for the two observed device failures.
-6. Tools/audit_macho_imports.py now probes the expanded original reexport
-   set, not only IOKit, MobileCoreServices and libSystem.
-7. Tests/test_upstream_framework_routing.py guards this behavior against
-   accidental reversal in a later experiment.
+Commit and push source changes only to `experiment/windows-native-ios27`. Never publish proprietary game executables, DMGs, FactorioData, saves, or private IPAs. Do not modify `main` or stable releases. Keep reports untracked unless requested. Reuse verified intermediate artifacts and avoid rebuilding game data.
 
-## CURRENT STATUS — audit clean by counts, process exit not yet confirmed
+## Build and validation references
 
-The following existing IPA was rebuilt from the original owned Factorio
-2.1.24 DMG with the restored upstream routing:
-
-  F:\FactoriOS\dist\private-duo-ios27-routing-20261126-204853-2b75de1\FactorioPad.ipa
-
-SHA-256: f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9
-
-Latest audit evidence reports all 160 missing direct FactorioCompat exports
-verified by iOS-arm64 reexport linker probes. The latest report has zero
-unverified FactorioCompat imports AND zero unverified native-framework imports.
-The new native-provider regression suite passed 5/5.
-
-The status JSON still said "failed" because it reflected an older run.
-Source now fixes status transitions: prior exit_code/audit_exit_code/error
-fields cannot be inherited from an earlier attempt with the same tag.
-The --audit-only entrypoint now writes audit-latest-output.txt and
-audit-latest-result.json with the exact IPA SHA-256 and actual subprocess
-exit code of the *current* invocation; older appended logs are not evidence
-of the most recent status.
-
-## NEXT STEPS — autonomously finish, no rebuilt IPA unless justified
-
-1. Pull latest experiment branch. Do not touch main, stable release,
-   FactorioData or saves.
-2. Run the game-free status regression tests:
-   python -m unittest discover -s F:/FactoriOS/Tests -p test_private_audit_status.py
-3. Run the exact existing-IPA audit **through the status-aware wrapper**:
-   python -u F:/FactoriOS/Tools/build_private_duo.py --audit-only "F:/FactoriOS/dist/private-duo-ios27-routing-20261126-204853-2b75de1/FactorioPad.ipa"
-4. Read the process exit code, the new audit-latest-result.json, and the
-   build_private_duo_status.json. Require an actual exit code of zero and
-   a matching IPA SHA256. If exit is nonzero even with zero unverified
-   provider imports, inspect other audit gates (invalid_known, no required
-   imports, exceptions), fix the actual bug, rerun, commit and push.
-5. If and only if the completed run returns zero and verifies the same
-   IPA hash, report the existing IPA as host-audit-validated and ready for
-   the next **physical** iPhone Duo test. This is not proof the game starts.
-6. Do not rebuild the IPA for audit-only changes. No reason to rebuild
-   unless the packaged app/guest/compat code actually changes.
-
-Commit/push any remaining code fixes. Do not end the turn at another
-status check or before interpreting the saved current-run result.
+- Windows SSH alias: `nxwindows`
+- Repository: `F:\FactoriOS`
+- Original Factorio source: `F:\FactoriOS\factorio_mac_2.1.24.dmg`
+- Windows SDK 27.2: `F:\NXNative\1_Development\SDKs\Xcode_27.2\iPhoneOS.sdk`
+- Build status/logs: `F:\FactoriOS\dist\build_private_duo_status.json` and `F:\FactoriOS\dist\build_private_duo_logs\`
+- Use the current committed `build_private_duo.py` workflow. Confirm status and audit results for the exact IPA. Never infer success from stale appended logs or an earlier run.
+- Repatch FactorioGuest from the original DMG whenever guest patching changes. Never patch an already modified guest.
+- Physical-device launch and gameplay remain required to validate each new candidate.

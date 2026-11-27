@@ -42,34 +42,11 @@ not a final answer. An unsuccessful hypothesis is evidence to revise and retry.
 - Fix tooling errors (paths, shell quoting, imports, logging, metadata validation)
   yourself, just as you fix actual compatibility code.
 
-## Active work: restore the previously working upstream Mach-O behavior
+## Active work: Duo launch baseline and UI cleanup
 
-The user requested iPhone Duo display support, **not a new guest framework
-routing model**. The Windows experiment previously changed original upstream
-Tools/patch_factorio.py to route Foundation, CoreGraphics and five other macOS
-frameworks directly to iOS native libraries. That bypassed FactorioCompat and
-caused confirmed iPhone dyld failures for NSAppleEventManager and
-kCGDisplayShowDuplicateLowResolutionModes, both already implemented by the
-existing compatibility framework.
+The Factorio 2.1.24 private build documented in `docs/NEXT_CODEX_HANDOFF.md` has launched successfully on the physical iPhone Duo. Treat it as the known-good runtime baseline. Continue with focused UI cleanup on `experiment/windows-native-ios27` while preserving the working IPA and all user data.
 
-- Original upstream/main Tools/patch_factorio.py is now restored verbatim.
-  **Do not restore the broken Windows-native routing or invent more one-symbol
-  rebinding patches.** Preserve this original two-level guest dylib behavior.
-- Match FactorioCompat.xcconfig: reexport the original iOS native providers
-  through FactorioCompat using actual LC_REEXPORT_DYLIB commands. On Windows,
-  use MobileCoreServices for legacy CoreServices UTType exports; add
-  CoreServices when a linkable SDK stub is present.
-- Run Tests/test_upstream_framework_routing.py before expensive builds.
-  Use the original Factorio 2.1.24 DMG to repatch FactorioGuest after patcher
-  changes; an existing IPA retains its old broken dependency table.
-- Run the complete SDK 27.2 import audit including direct and reexported native
-  symbols and actual provider library ordinals. Do not call a narrow audit a
-  successful launch test.
-- Inspect prior failed audit reports yourself; fix genuine failures and
-  preserve device data. Compile/package a NEW private IPA only after these
-  routing and native export checks are accounted for.
-- Commit and PUSH meaningful fixes. Physical iPhone Duo launch remains the
-  final runtime proof. Never claim host static checks establish game startup.
+Autonomous development is required. When a routine command, compile, test, packaging step, or audit fails, inspect its current-run log and relevant source, fix the root cause, and rerun. Do not stop after diagnosing an ordinary error or ask the user to relay fixes between sessions. Stop only at a genuine external dependency such as physical hardware access or credentials. Keep commits on the experiment branch and do not modify `main`, stable releases, FactorioData, or saves.
 
 ## Reporting and stopping rules
 
