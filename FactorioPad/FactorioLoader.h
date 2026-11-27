@@ -8,6 +8,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(class, nonatomic, readonly) BOOL usesNativeController;
 @property(class, nonatomic, readonly) NSString *graphicsPreset;
 
+/// Read-only validation of Documents/FactorioData against the bundled guest version.
++ (BOOL)hasValidGameData;
++ (nullable NSString *)installedGameVersion;
 + (nullable NSURL *)startupLogURL;
 + (void)restoreStartupLogFolder;
 + (void)logMessage:(NSString *)message;
