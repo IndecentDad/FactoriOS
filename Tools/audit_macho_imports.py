@@ -407,21 +407,34 @@ def main() -> int:
         (args.report_dir / "reexport-resolution.json").write_text(
             json.dumps(evidence, indent=2), encoding="utf-8")
 
-        # A passing FactorioCompat-only audit previously missed
-        # _OBJC_CLASS_$_NSAppleEventManager bound to native Foundation.
-        # Verify that macOS-only guest class resolves from the actual shim,
-        # not a system framework that does not provide it on iOS.
-        known_class = "_OBJC_CLASS_$_NSAppleEventManager"
-        known_rows = [
-            line.strip()
-            for name in ("strong", "lazy")
-            for line in bind_outputs[name].splitlines()
-            if line.strip().split()[-1:] == [known_class]
-        ]
-        bad_known_class = not known_rows or any("FactorioCompat" not in row for row in known_rows)
-        if bad_known_class:
-            print("ERROR: NSAppleEventManager still bound to native Foundation, "
-                  f"or not found in strong binds: {known_rows}")
+        # The original scoped audit missed imports that still targeted iOS
+        # Foundation/CoreGraphics despite already having compatible shims.
+        # These device-proven blockers must have explicit FactorioCompat binds
+        # and exports in the actual packaged binaries.
+        known_compat_imports = {
+            "_OBJC_CLASS_$_NSAppleEventManager": "Foundation",
+            "_kCGDisplayShowDuplicateLowResolutionModes": "CoreGraphics",
+        }
+        known_routings: dict[str, list[str]] = {}
+        invalid_known: dict[str, str] = {}
+        for known_symbol, native_framework in known_compat_imports.items():
+            rows = [
+                line.strip()
+                for name in ("strong", "lazy")
+                for line in bind_outputs[name].splitlines()
+                if line.strip().split()[-1:] == [known_symbol]
+            ]
+            known_routings[known_symbol] = rows
+            if not rows or any("FactorioCompat" not in row for row in rows):
+                invalid_known[known_symbol] = (
+                    f"Still bound to native {native_framework}, or no strong/lazy "
+                    f"binding found: {rows}")
+            elif known_symbol not in exports:
+                invalid_known[known_symbol] = (
+                    "Rebound correctly but missing export in packaged FactorioCompat")
+        if invalid_known:
+            for symbol, reason in invalid_known.items():
+                print(f"ERROR: {symbol}: {reason}")
 
         # Audit all other strong/lazy bindings against their native providers,
         # not just the imports routed through FactorioCompat.
@@ -455,8 +468,8 @@ def main() -> int:
                 "native_sdk_verified": native_verified,
                 "unverified_native_imports": native_unverified,
                 "native_binding_rows": native_binding_rows,
-                "nsappleeventmanager_bind_rows": known_rows,
-                "nsappleeventmanager_wrong_native_provider": bad_known_class,
+                "known_compat_symbol_routings": known_routings,
+                "invalid_known_compat_routings": invalid_known,
                 "note": "Positive SDK link probes do not prove on-device dyld behavior.",
             }, indent=2), encoding="utf-8")
         total_native_missing = sum(len(v) for v in native_unverified.values())
@@ -479,14 +492,14 @@ def main() -> int:
             return 2
         print("NOTE: Other system-framework bindings and actual device runtime remain outside this audit's scope.")
         print(f"Reports: {args.report_dir}")
-        if bad_known_class:
-            print("The previously observed device missing-class failure is still present.")
+        if invalid_known:
+            print("Known macOS-only Foundation/CoreGraphics device failures remain in packaged guest.")
         for provider, symbols in sorted(native_unverified.items()):
             if symbols:
                 print(f"  NATIVE UNVERIFIED {provider}: {len(symbols)} symbols")
                 for symbol in list(symbols)[:12]:
                     print(f"    {symbol}")
-        return 1 if genuine_remaining or total_native_missing or bad_known_class else 0
+        return 1 if genuine_remaining or total_native_missing or invalid_known else 0
 
 
 if __name__ == "__main__":
