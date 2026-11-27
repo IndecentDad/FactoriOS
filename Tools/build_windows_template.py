@@ -223,6 +223,12 @@ def package_template(binary: pathlib.Path, framework: pathlib.Path, output: path
                  "FactoriOSBuildUTC": datetime.now(timezone.utc).isoformat(),
                  "FactoriOSTargetSDK": SDK_VERSION,
                  "MinimumOSVersion": MIN_IOS, "FactorioPadExternalDataVersion": 1,
+                 # Match original Xcode TARGETED_DEVICE_FAMILY = 1,2.
+                 # The Windows app must advertise native iPad support too,
+                 # not fall into the iPhone-only compatibility container.
+                 "UIDeviceFamily": [1, 2],
+                 # Preserve upstream iPad's windowing support.
+                 "UIRequiresFullScreen": False,
                  "CFBundleSupportedPlatforms": ["iPhoneOS"], "LSRequiresIPhoneOS": True})
     icon = BUILD / "FactoriOS-icon.png"
     from PIL import Image
