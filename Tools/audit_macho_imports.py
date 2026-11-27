@@ -172,7 +172,9 @@ def provider_matches_binding(provider: str, raw_line: str) -> bool:
 
 def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
                       llvm: pathlib.Path, target_dir: pathlib.Path,
-                      label: str) -> tuple[bool, dict[str, str], str]:
+                      label: str, provider_flags: list[str] | None = None,
+                      permitted_providers: set[str] | None = None
+                      ) -> tuple[bool, dict[str, str], str]:
     """Compile exact symbols, link against one candidate provider, and validate binds.
 
     Positive and negative controls use the SAME object. A text match in a
@@ -209,12 +211,16 @@ def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
     base = [str(ld), "-dylib", "-arch", "arm64", "-platform_version",
             "ios", MIN_IOS, SDK_VERSION, "-syslibroot", str(sdk),
             "-undefined", "error", "-no_fixup_chains"]
-    # For non-libSystem tests, include the standard C runtime in both
-    # variants. For libSystem, omitting it is the *negative* control.
-    if provider != "libSystem":
+    # For individual framework probes keep libSystem in both controls.
+    # For the combined reexport probe, include libSystem only in the positive
+    # set so its symbols also receive a meaningful negative control.
+    if provider not in ("libSystem", "__all_reexports__"):
         base += ["-lSystem"]
+    positive_flags = (
+        PROVIDER_LINK_FLAGS[provider] if provider_flags is None else provider_flags
+    )
     with_provider = subprocess.run(
-        base + PROVIDER_LINK_FLAGS[provider] + ["-o", str(dylib), str(obj)],
+        base + positive_flags + ["-o", str(dylib), str(obj)],
         capture_output=True, text=True, errors="replace")
     if with_provider.returncode:
         return False, {}, (
@@ -231,7 +237,14 @@ def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
             fields = line.strip().split()
             if len(fields) < 2 or fields[-1] not in expected:
                 continue
-            if provider_matches_binding(provider, line):
+            if provider == "__all_reexports__":
+                valid_bind = any(
+                    provider_matches_binding(item, line)
+                    for item in (permitted_providers or set())
+                )
+            else:
+                valid_bind = provider_matches_binding(provider, line)
+            if valid_bind:
                 found[fields[-1]] = "native Mach-O bind: " + line.strip()
 
     if len(symbols) == 1 and symbols[0] not in found:
@@ -256,7 +269,9 @@ def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
 
 def probe_provider_symbols(symbols: list[str], provider: str,
                            sdk: pathlib.Path, llvm: pathlib.Path,
-                           tempdir: pathlib.Path, report_dir: pathlib.Path
+                           tempdir: pathlib.Path, report_dir: pathlib.Path,
+                           provider_flags: list[str] | None = None,
+                           permitted_providers: set[str] | None = None
                            ) -> tuple[dict[str, str], dict[str, str]]:
     """Bisect ambiguous imports until each has direct or linker-control evidence."""
     if not sdk.is_dir():
@@ -275,7 +290,9 @@ def probe_provider_symbols(symbols: list[str], provider: str,
             return
         count += 1
         ok, bound, diagnostic = try_provider_link(
-            group, provider, sdk, llvm, tempdir, f"{provider}_{count}")
+            group, provider, sdk, llvm, tempdir, f"{provider}_{count}",
+            provider_flags=provider_flags,
+            permitted_providers=permitted_providers)
         attempts.append({"symbols": group, "linked_with_provider": ok,
                          "verified_symbols": list(bound), "diagnostic": diagnostic})
         verified.update(bound)
@@ -392,24 +409,32 @@ def main() -> int:
         verified_by_provider: dict[str, dict[str, str]] = {}
         unverified_by_provider: dict[str, dict[str, str]] = {}
         outstanding = list(missing_direct)
-        # Prefer known provider order, then check all other original
-        # upstream shimmed native libraries. This covers Foundation,
-        # CoreGraphics, CoreVideo, Metal, Security, CoreAudio and AudioToolbox
-        # without assuming their SDK exports are direct FactorioCompat defs.
-        priority = ["IOKit", "MobileCoreServices", "CoreServices", "libSystem"]
-        ordered_providers = priority + sorted(
-            name for name in provider_reexport_paths if name not in priority)
-        for provider in ordered_providers:
-            if not outstanding or not provider_reexport_paths.get(provider):
-                continue
+        # One combined SDK linker probe matches how FactorioCompat itself
+        # reexports all native providers. The previous algorithm ran a
+        # recursive per-symbol linker search against EVERY framework: with
+        # hundreds of upstream-routed imports this became extremely costly
+        # even though most were legitimate iOS symbols from other providers.
+        active_providers = [
+            name for name in provider_reexport_paths
+            if provider_reexport_paths[name]
+        ]
+        combined_flags: list[str] = []
+        for provider in active_providers:
+            combined_flags.extend(PROVIDER_LINK_FLAGS[provider])
+        if outstanding and combined_flags:
             verified, rejected = probe_provider_symbols(
-                outstanding, provider, args.sdk, args.llvm_bin, tempdir,
-                args.report_dir)
-            verified_by_provider[provider] = verified
-            unverified_by_provider[provider] = rejected
+                outstanding, "__all_reexports__", args.sdk, args.llvm_bin,
+                tempdir, args.report_dir, provider_flags=combined_flags,
+                permitted_providers=set(active_providers))
+            verified_by_provider["combined_reexports"] = verified
+            unverified_by_provider["combined_reexports"] = rejected
             outstanding = sorted(set(outstanding) - set(verified))
         genuine_remaining = outstanding
-        verified_iokit = verified_by_provider.get("IOKit", {})
+        verified_iokit = {
+            symbol: evidence
+            for symbol, evidence in verified_by_provider.get("combined_reexports", {}).items()
+            if "IOKit" in evidence
+        }
         (args.report_dir / "verified-iokit-reexports.txt").write_text(
             "\n".join(sorted(verified_iokit)) + ("\n" if verified_iokit else ""),
             encoding="utf-8")
@@ -508,7 +533,7 @@ def main() -> int:
         print(f"FactorioCompat weak guest bindings: {len(optional)}")
         print(f"Missing strong/lazy DIRECT exports: {len(missing_direct)}")
         for provider, verified in verified_by_provider.items():
-            print(f"Verified via {provider} LC_REEXPORT_DYLIB and iOS-arm64 SDK link: {len(verified)}")
+            print(f"Verified via {provider} iOS-arm64 SDK linker probe: {len(verified)}")
         print(f"REMAINING UNVERIFIED strong/lazy FactorioCompat bindings: {len(genuine_remaining)}")
         print(f"Native strong/lazy bindings tested: {sum(map(len, native_groups.values()))}")
         print(f"Native strong/lazy provider imports unverified: {total_native_missing}")
@@ -518,7 +543,7 @@ def main() -> int:
             print("WARNING: no FactorioCompat bindings were recognized; inspect the saved bind tables.")
             print(f"Reports: {args.report_dir}")
             return 2
-        print("NOTE: Other system-framework bindings and actual device runtime remain outside this audit's scope.")
+        print("NOTE: SDK export verification is host-side only; device dyld, initialization and gameplay remain untested.")
         print(f"Reports: {args.report_dir}")
         if invalid_known:
             print("Known macOS-only Foundation/CoreGraphics device failures remain in packaged guest.")
