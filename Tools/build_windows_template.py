@@ -2,6 +2,7 @@
 """Build and validate the game-free FactoriOS iOS template with Windows LLVM."""
 from __future__ import annotations
 import argparse, json, os, pathlib, plistlib, shutil, struct, subprocess, sys, zipfile
+from datetime import datetime, timezone
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SDK = pathlib.Path(os.environ.get("FACTORIOS_IOS_SDK", r"F:\NXNative\1_Development\SDKs\Xcode_27.2\iPhoneOS.sdk"))
@@ -209,6 +210,9 @@ def package_template(binary: pathlib.Path, framework: pathlib.Path, output: path
                  "CFBundleName": "FactoriOS", "CFBundleDisplayName": "FactoriOS",
                  "CFBundlePackageType": "APPL", "CFBundleInfoDictionaryVersion": "6.0",
                  "CFBundleShortVersionString": "2.3.0", "CFBundleVersion": "1",
+                 "FactoriOSSourceCommit": run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], quiet=True).strip(),
+                 "FactoriOSBuildUTC": datetime.now(timezone.utc).isoformat(),
+                 "FactoriOSTargetSDK": SDK_VERSION,
                  "MinimumOSVersion": MIN_IOS, "FactorioPadExternalDataVersion": 1,
                  "CFBundleSupportedPlatforms": ["iPhoneOS"], "LSRequiresIPhoneOS": True})
     icon = BUILD / "FactoriOS-icon.png"
