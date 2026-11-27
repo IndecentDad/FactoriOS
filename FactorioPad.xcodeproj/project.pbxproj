@@ -64,6 +64,16 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				// The following are exclusively built by Tools/build_windows_template.py.
+				// Keep the original Swift/Xcode iPad app and its @main entry point.
+				FactorioCursorView.h,
+				FactorioCursorView.m,
+				FactorioSaveSync.h,
+				FactorioSaveSync.m,
+				FactorioTouchUIKit.h,
+				FactorioTouchUIKit.m,
+				FactorioUIKitApp.m,
+				main.m,
 			);
 			target = 3A967EFB306543AB00716585 /* FactorioPad */;
 		};
