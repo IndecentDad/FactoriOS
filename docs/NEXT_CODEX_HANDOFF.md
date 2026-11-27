@@ -28,17 +28,40 @@ compiler errors, code differences, linker failures, or test failures.**
 
 ## New evidence and immediate work
 
-The user reports this IPA produced the **same device-side failure as the
-previous candidate**, despite the static audit passing. The exact NEW log
-message has not yet been supplied in the active chat. Do NOT assume it is the
-same missing symbol unless the device log supports that.
+The user's fresh FactorioPad(10).log confirms the newest **actual** device
+failure (2026-11-27 01:37 UTC) occurs inside FactorioGuest dlopen:
+  Symbol not found: _OBJC_CLASS_$_NSAppleEventManager
+  Expected in: /System/Library/Frameworks/Foundation.framework/Foundation
+The prior UTType errors appear earlier in the accumulated log, but the newest
+error is a different dyld binding: FactorioGuest erroneously looks for the
+macOS-only NSAppleEventManager class in native iOS Foundation, even though
+FactorioCompat/AppKitShims.m already implements it.
 
-1. Obtain the NEW FactorioPad.log / FactoriOS.log or device crash/dyld
-   diagnostic that identifies the actual failing library, symbol, dependency,
-   entitlement, launch phase, and binary version. Read the whole relevant
-   startup sequence, not only the last line. If device logs are inaccessible
-   from the Windows host, give one precise request for the required log and
-   perform other non-destructive checks locally while awaiting it.
+I have committed the fix infrastructure directly to the experiment branch:
+- Tools/rebind_guest_symbols.py: symbol-specific Foundation -> FactorioCompat
+  dylib ordinal rewrite, supporting chained Mach-O imports and classic binds.
+- Tools/patch_factorio.py invokes the rewrite when preparing FactorioGuest.
+- Tests/test_rebind_guest_symbols.py: synthetic chained/classic import tests.
+- Tools/build_private_duo.py: packaged guest must bind NSAppleEventManager
+  to FactorioCompat and the class must be exported by the packaged framework.
+- Tools/audit_macho_imports.py: audit both FactorioCompat and NATIVE strong
+  imports against iOS SDK rather than passing solely on 169 shim-bound imports.
+- The Windows template and loader stamp/report source SHA and build timestamp.
+
+NEXT ACTION: Pull latest experiment source and run
+  python -m unittest discover -s Tests -p test_rebind_guest_symbols.py
+Fix any test failure independently. Then build a FRESH template and private IPA,
+because the Windows native loader/build identity has changed, and validate with
+the updated full provider audit. Run:
+  python -u F:/FactoriOS/Tools/build_private_duo.py --dmg F:/FactoriOS/factorio_mac_2.1.24.dmg
+Do NOT reuse the old guest or old SDK template: the Mach-O guest ordinal
+must be repatched from the original 2.1.24 DMG. Do not alter FactorioData,
+saves, main, or stable release. If a new native missing symbol is discovered,
+resolve it at the correct provider ordinal, rerun focused tests, then rebuild.
+
+1. Use the confirmed device dlopen failure and committed ordinal-rebinding
+   fix described above. Do not ask for the existing FactorioPad(10).log again.
+   After host checks pass, the next physical install can test for new errors.
 2. Check repository/source parity BEFORE changing compatibility shims. As
    independently verified in the linked GitHub repository,
    FactorioPad/FactorioLoader.mm has identical contents in:
