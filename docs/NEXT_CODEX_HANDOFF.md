@@ -1,4 +1,4 @@
-# FactoriOS Windows SDK 27.2 — Resume from upstream routing restoration
+# FactoriOS Windows SDK 27.2 — Finish existing IPA audit status, then device test
 
 ## ACTIVE TASK — do not stop after diagnosing
 
@@ -57,29 +57,46 @@ macOS-only symbols from native Foundation and CoreGraphics.
 7. Tests/test_upstream_framework_routing.py guards this behavior against
    accidental reversal in a later experiment.
 
-## NEXT STEPS, autonomous
+## CURRENT STATUS — audit clean by counts, process exit not yet confirmed
 
-1. git -C F:/FactoriOS pull --ff-only
-2. Ensure branch is experiment/windows-native-ios27; do not reset or alter
-   main or any other checkout.
-3. Run:
-   python -m unittest discover -s F:/FactoriOS/Tests -p test_upstream_framework_routing.py
-4. Read full previous failed audit results in:
-   F:/FactoriOS/dist/private-duo-ios27-routing-20261126-194941-afccbc9/audit/
-   and its persistent build log. Distinguish genuine SDK missing exports from
-   obsolete native routing in that IPA.
-5. Build fresh Windows SDK 27.2 template and private IPA using:
-   python -u F:/FactoriOS/Tools/build_private_duo.py --dmg F:/FactoriOS/factorio_mac_2.1.24.dmg
-   The guest must be repatched from the original DMG to recover the original
-   upstream library ordinals. Do NOT reuse the last IPA or old patched guest.
-6. Inspect complete host audit and validate all guest import providers,
-   including upstream CoreServices alias/reexport expectations.
-7. Fix real validation and linker issues yourself; do not disable checks or
-   invent stub implementations. Push source changes after fixes.
-8. Report exact commit, resulting IPA SHA-256, original game guest version,
-   verified source/SDK metadata, full audit counts and any remaining gaps.
-   The next install on the physical Duo is needed to prove runtime launch.
+The following existing IPA was rebuilt from the original owned Factorio
+2.1.24 DMG with the restored upstream routing:
 
-Never describe host-side checks as device-launch proof. The final criterion is
-that FactorioGuest actually loads and Factorio runs on iPhone Duo, with the
-display changes tested afterward. No further per-symbol guess/rebuild cycle.
+  F:\FactoriOS\dist\private-duo-ios27-routing-20261126-204853-2b75de1\FactorioPad.ipa
+
+SHA-256: f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9
+
+Latest audit evidence reports all 160 missing direct FactorioCompat exports
+verified by iOS-arm64 reexport linker probes. The latest report has zero
+unverified FactorioCompat imports AND zero unverified native-framework imports.
+The new native-provider regression suite passed 5/5.
+
+The status JSON still said "failed" because it reflected an older run.
+Source now fixes status transitions: prior exit_code/audit_exit_code/error
+fields cannot be inherited from an earlier attempt with the same tag.
+The --audit-only entrypoint now writes audit-latest-output.txt and
+audit-latest-result.json with the exact IPA SHA-256 and actual subprocess
+exit code of the *current* invocation; older appended logs are not evidence
+of the most recent status.
+
+## NEXT STEPS — autonomously finish, no rebuilt IPA unless justified
+
+1. Pull latest experiment branch. Do not touch main, stable release,
+   FactorioData or saves.
+2. Run the game-free status regression tests:
+   python -m unittest discover -s F:/FactoriOS/Tests -p test_private_audit_status.py
+3. Run the exact existing-IPA audit **through the status-aware wrapper**:
+   python -u F:/FactoriOS/Tools/build_private_duo.py --audit-only "F:/FactoriOS/dist/private-duo-ios27-routing-20261126-204853-2b75de1/FactorioPad.ipa"
+4. Read the process exit code, the new audit-latest-result.json, and the
+   build_private_duo_status.json. Require an actual exit code of zero and
+   a matching IPA SHA256. If exit is nonzero even with zero unverified
+   provider imports, inspect other audit gates (invalid_known, no required
+   imports, exceptions), fix the actual bug, rerun, commit and push.
+5. If and only if the completed run returns zero and verifies the same
+   IPA hash, report the existing IPA as host-audit-validated and ready for
+   the next **physical** iPhone Duo test. This is not proof the game starts.
+6. Do not rebuild the IPA for audit-only changes. No reason to rebuild
+   unless the packaged app/guest/compat code actually changes.
+
+Commit/push any remaining code fixes. Do not end the turn at another
+status check or before interpreting the saved current-run result.
