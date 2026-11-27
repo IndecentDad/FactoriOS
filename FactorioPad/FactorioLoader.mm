@@ -199,6 +199,12 @@ __attribute__((constructor)) static void FactorioBeginStartupLogging(void)
         FactorioLog([NSString stringWithFormat:@"Startup %@; FactorioPad %@ (%@)", NSDate.date,
             NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"],
             NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"]]);
+        // Distinguish separately sideloaded Windows builds that share bundle
+        // version 1. This is recorded before attempting guest dlopen.
+        FactorioLog([NSString stringWithFormat:@"FactoriOS source=%@ built=%@ sdk=%@",
+            NSBundle.mainBundle.infoDictionary[@"FactoriOSSourceCommit"] ?: @"unknown",
+            NSBundle.mainBundle.infoDictionary[@"FactoriOSBuildUTC"] ?: @"unknown",
+            NSBundle.mainBundle.infoDictionary[@"FactoriOSTargetSDK"] ?: @"unknown"]);
         FactorioLog([NSString stringWithFormat:@"Device: %s; OS: %@; Memory: %llu bytes",
             device.machine, NSProcessInfo.processInfo.operatingSystemVersionString,
             NSProcessInfo.processInfo.physicalMemory]);
