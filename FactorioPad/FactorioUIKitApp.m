@@ -463,32 +463,30 @@
 - (void)pointerConfigurationChanged:(NSNotification *)n {
   [self setNeedsUpdateOfPrefersPointerLocked];
   [self.navigationController setNeedsUpdateOfPrefersPointerLocked];
+  // A controller hides the on-screen pad, but never the keyboard shortcut.
+  // The user can still reveal touch controls via the keyboard's hold menu.
+  if ([n.name isEqualToString:GCControllerDidConnectNotification] ||
+      [n.name isEqualToString:GCControllerDidDisconnectNotification]) {
+    self.touchPad.enabled = GCController.controllers.count == 0;
+  }
 }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
-  return UIInterfaceOrientationMaskLandscape;
+  // The Duo has a useful two-panel portrait layout. Do not force landscape.
+  return UIInterfaceOrientationMaskAllButUpsideDown;
 }
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.view.backgroundColor = UIColor.blackColor;
   FactorioGameView *v = [FactorioGameView new];
   self.gameView = v;
-  v.translatesAutoresizingMaskIntoConstraints = NO;
+  // Manual scene-based layout lets the unfolded Duo use both orientations.
+  // Metal host and input viewport follow the actual gameView bounds.
+  v.frame = self.view.bounds;
+  v.autoresizingMask = UIViewAutoresizingNone;
   [self.view addSubview:v];
-  CGFloat pad =
-      UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone
-          ? 16
-          : 0;
-  UILayoutGuide *g = self.view.safeAreaLayoutGuide;
-  [NSLayoutConstraint activateConstraints:@[
-    [v.leadingAnchor constraintEqualToAnchor:g.leadingAnchor constant:pad],
-    [v.trailingAnchor constraintEqualToAnchor:g.trailingAnchor constant:-pad],
-    [v.topAnchor constraintEqualToAnchor:g.topAnchor constant:pad],
-    [v.bottomAnchor constraintEqualToAnchor:g.bottomAnchor constant:-pad]
-  ]];
   self.touchPad = [FactorioTouchUIKit new];
   self.touchPad.translatesAutoresizingMaskIntoConstraints = NO;
-  self.touchPad.enabled = ![NSUserDefaults.standardUserDefaults
-      boolForKey:@"FactorioNativeController"];
+  self.touchPad.enabled = GCController.controllers.count == 0;
   __weak typeof(self) weakSelf = self;
   self.touchPad.onExit = ^{
     [weakSelf.navigationController popViewControllerAnimated:YES];
@@ -496,21 +494,16 @@
   [self.view addSubview:self.touchPad];
   for (NSString *name in @[
          UIScreenDidConnectNotification, UIScreenDidDisconnectNotification,
-         GCMouseDidConnectNotification, GCMouseDidDisconnectNotification
+         GCMouseDidConnectNotification, GCMouseDidDisconnectNotification,
+         GCControllerDidConnectNotification, GCControllerDidDisconnectNotification
        ])
     [[NSNotificationCenter defaultCenter]
         addObserver:self
            selector:@selector(pointerConfigurationChanged:)
                name:name
              object:nil];
-  [NSLayoutConstraint activateConstraints:@[
-    [self.touchPad.leadingAnchor
-        constraintEqualToAnchor:self.view.leadingAnchor],
-    [self.touchPad.trailingAnchor
-        constraintEqualToAnchor:self.view.trailingAnchor],
-    [self.touchPad.topAnchor constraintEqualToAnchor:self.view.topAnchor],
-    [self.touchPad.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
-  ]];
+  self.touchPad.frame = self.view.bounds;
+  self.touchPad.autoresizingMask = UIViewAutoresizingNone;
   self.navigationController.navigationBarHidden = YES;
 }
 - (void)dealloc {
@@ -549,20 +542,42 @@
 }
 - (void)viewDidLayoutSubviews {
   [super viewDidLayoutSubviews];
-  UIWindowScene *s = self.view.window.windowScene;
-  CAMetalLayer *l = (CAMetalLayer *)self.view.subviews.firstObject.layer;
-  [FactorioLoader
-      logMessage:[NSString
-                     stringWithFormat:
-                         @"Geometry scene=%@ window=%@ safe=%@ game=%@ "
-                         @"scale=%.2f drawable=%@ orientation=%ld",
-                         NSStringFromCGRect(s.coordinateSpace.bounds),
-                         NSStringFromCGRect(self.view.window.bounds),
-                         NSStringFromUIEdgeInsets(self.view.safeAreaInsets),
-                         NSStringFromCGRect(
-                             self.view.subviews.firstObject.bounds),
-                         s.screen.scale, NSStringFromCGSize(l.drawableSize),
-                         (long)s.interfaceOrientation]];
+  CGRect bounds = self.view.bounds;
+  UIEdgeInsets safe = self.view.safeAreaInsets;
+  CGRect usable = UIEdgeInsetsInsetRect(bounds, safe);
+  // A single unfolded Duo scene is two landscape panels in portrait.
+  // Do not apply this split to ordinary narrow iPhones or iPads.
+  BOOL duoPortrait =
+      UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
+      CGRectGetHeight(bounds) > CGRectGetWidth(bounds) * 1.15 &&
+      CGRectGetWidth(bounds) >= 600;
+  CGRect gameRect = usable, controlsRect = usable;
+  if (duoPortrait) {
+    CGFloat hinge = CGRectGetMidY(bounds);
+    gameRect.size.height = MAX(1, hinge - CGRectGetMinY(usable) - 3);
+    CGFloat controlsTop = hinge + 3;
+    controlsRect = CGRectMake(CGRectGetMinX(usable), controlsTop,
+                              CGRectGetWidth(usable),
+                              MAX(1, CGRectGetMaxY(usable) - controlsTop));
+  }
+  // Rely on actual asymmetric scene safe areas, not the former blanket
+  // 16-point phone padding that needlessly shrank the game on the Duo.
+  self.gameView.frame = CGRectIntegral(gameRect);
+  self.touchPad.frame = CGRectIntegral(controlsRect);
+  [self.gameView setNeedsLayout];
+  [self.touchPad setNeedsLayout];
+
+  UIWindowScene *scene = self.view.window.windowScene;
+  CAMetalLayer *metal = (CAMetalLayer *)self.gameView.layer;
+  [FactorioLoader logMessage:[NSString stringWithFormat:
+      @"Duo geometry scene=%@ window=%@ safe=%@ game=%@ touch=%@ "
+       "drawable=%@ orientation=%ld duoPortrait=%d",
+      NSStringFromCGRect(scene.coordinateSpace.bounds),
+      NSStringFromCGRect(self.view.window.bounds),
+      NSStringFromUIEdgeInsets(safe), NSStringFromCGRect(self.gameView.frame),
+      NSStringFromCGRect(self.touchPad.frame),
+      NSStringFromCGSize(metal.drawableSize),
+      (long)scene.interfaceOrientation, duoPortrait]];
 }
 @end
 
@@ -610,19 +625,8 @@
   self.window.rootViewController = [[FactorioNavigationController alloc]
       initWithRootViewController:[FactorioHomeController new]];
   [self.window makeKeyAndVisible];
-  if (@available(iOS 16.0, *)) {
-    UIWindowSceneGeometryPreferencesIOS *p =
-        [[UIWindowSceneGeometryPreferencesIOS alloc]
-            initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape];
-    [s requestGeometryUpdateWithPreferences:p
-                               errorHandler:^(NSError *e) {
-                                 [FactorioLoader
-                                     logMessage:
-                                         [NSString stringWithFormat:
-                                                       @"Landscape request: %@",
-                                                       e.localizedDescription]];
-                               }];
-  }
+  // Let UIKit deliver portrait or landscape geometry for the Duo.
+  // We compose game + controls from the scene bounds, not a forced rotation.
   [FactorioLoader
       logMessage:[NSString
                      stringWithFormat:@"Scene connected screen=%@ window=%@",
