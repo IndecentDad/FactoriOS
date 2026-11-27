@@ -230,7 +230,7 @@ def package_template(binary: pathlib.Path, framework: pathlib.Path, output: path
     shutil.copy2(icon, app / "FactoriOS-icon.png")
     info["CFBundleIcons"] = {"CFBundlePrimaryIcon": {"CFBundleIconFiles": ["FactoriOS-icon"]}}
     info["CFBundleIcons~ipad"] = info["CFBundleIcons"]
-    info["UISupportedInterfaceOrientations"] = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"]
+    info["UISupportedInterfaceOrientations"] = ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"]
     info["UISupportedInterfaceOrientations~ipad"] = info["UISupportedInterfaceOrientations"]
     (app / "Info.plist").write_bytes(plistlib.dumps(info, sort_keys=True))
     raw = BUILD / "FactorioPad-unsigned.ipa"
