@@ -224,8 +224,23 @@ def verify_output(ipa_path: Path) -> tuple[str, str]:
             dependency_report = subprocess.run(
                 [str(objdump), "--macho", "--dylibs-used", str(guest_bin)],
                 capture_output=True, text=True, errors="replace", check=True).stdout
-            if "Foundation.framework/Foundation" not in dependency_report:
-                raise RuntimeError("Guest lacks native Foundation dependency; stale patcher?")
+            # Compare against the *original upstream* Mach-O guest routing:
+            # Foundation, CoreGraphics and other macOS framework ordinals are
+            # rewritten to FactorioCompat. They must not silently revert to
+            # direct native iOS libraries on another Windows build.
+            from patch_factorio import SHIM_FRAMEWORKS
+            expected_compat = "@rpath/FactorioCompat.framework/FactorioCompat"
+            if expected_compat not in dependency_report:
+                raise RuntimeError("Guest does not load the upstream FactorioCompat dependency")
+            stale_native = [
+                framework for framework in sorted(SHIM_FRAMEWORKS)
+                if f"/{framework}.framework/{framework}" in dependency_report
+                or f"/{framework}.framework/Versions/A/{framework}" in dependency_report
+            ]
+            if stale_native:
+                raise RuntimeError(
+                    f"Guest uses native framework paths instead of upstream FactorioCompat: "
+                    f"{stale_native}. Restore canonical patch_factorio.py routing.")
             # Device logs show two macOS-only symbols were incorrectly
             # bound to iOS native frameworks even though the compatibility
             # framework already exports both. Check BOTH the dyld provider
@@ -262,7 +277,7 @@ def verify_output(ipa_path: Path) -> tuple[str, str]:
                 raise RuntimeError(
                     f"Packaged FactorioCompat missing mandatory exports: {missing_exports}")
             print("macOS-only NSAppleEventManager and CGDisplay constant binds: FactorioCompat")
-            print("Native framework routing confirmed: Foundation -> Foundation.framework")
+            print("Upstream framework routing confirmed: macOS Foundation/CoreGraphics and other shim providers -> FactorioCompat")
             print("Known missing compatibility symbol exported: _kUTTagClassMIMEType")
         return guest_sha, compat_sha
 
