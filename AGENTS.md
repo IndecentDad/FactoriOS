@@ -42,6 +42,25 @@ not a final answer. An unsuccessful hypothesis is evidence to revise and retry.
 - Fix tooling errors (paths, shell quoting, imports, logging, metadata validation)
   yourself, just as you fix actual compatibility code.
 
+## Active work: preserve production iPad UI alongside Duo experiment
+
+The original Xcode Swift app and the Xcode project remain present and
+unchanged in the experiment; do not port, replace or rewrite their iPad
+interface. The Windows SDK 27.2 builder compiles .c/.m/.mm only and selects
+FactorioUIKitApp.m rather than the original Swift app. It cannot be considered
+a full iPad feature replacement even when built with UIDeviceFamily [1,2].
+Use the original main/Xcode path for production iPad functionality until
+explicitly requested otherwise. Preserve external-display and advanced
+touch/controller features in the original Swift source. Do NOT merge the
+experimental Windows Objective-C app shell to main.
+
+The Windows template generator must explicitly emit UIDeviceFamily [1,2]
+matching TARGETED_DEVICE_FAMILY = "1,2" in the unchanged Xcode project.
+Treat missing universal device-family metadata as a packaging regression,
+not justification to rewrite iPad UI. Validate it in the game-free IPA tests
+before any private build. The user's latest Duo runtime baseline remains
+untouched and does not require a rebuild merely to document this distinction.
+
 ## Active work: Duo launch baseline and UI cleanup
 
 The Factorio 2.1.24 private build documented in `docs/NEXT_CODEX_HANDOFF.md` has launched successfully on the physical iPhone Duo. Treat it as the known-good runtime baseline. Continue with focused UI cleanup on `experiment/windows-native-ios27` while preserving the working IPA and all user data.
