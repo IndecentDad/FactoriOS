@@ -99,21 +99,40 @@ def is_iokit_reexport(path: str) -> bool:
     return bool(re.search(r"/IOKit\.framework/(?:Versions/[^/]+/)?IOKit$", path))
 
 
-def try_sdk_link(symbols: list[str], sdk: pathlib.Path,
-                 llvm: pathlib.Path, target_dir: pathlib.Path,
-                 label: str) -> tuple[bool, dict[str, str], str]:
-    """Prove IOKit imports using a targeted iOS link and provider verification.
+PROVIDER_LINK_FLAGS = {
+    "IOKit": ["-framework", "IOKit"],
+    "MobileCoreServices": ["-framework", "MobileCoreServices"],
+    "libSystem": ["-lSystem"],
+}
 
-    Unlike the previous implementation, this uses -no_fixup_chains so the
-    classic dyld bind table is inspectable. If a single-symbol probe links
-    but no IOKit bind is printed, an exact-symbol negative-control link
-    without IOKit can distinguish the framework requirement.
+
+def provider_matches_binding(provider: str, raw_line: str) -> bool:
+    """Confirm the actual library written into a successful probe's dyld bind."""
+    fields = raw_line.split()
+    if len(fields) < 2:
+        return False
+    dyld_provider = fields[-2]
+    if provider == "libSystem":
+        # libSystem's umbrella reexports can bind to libSystem.B.dylib
+        # or /usr/lib/system/ libraries depending on SDK/linker versions.
+        return ("libSystem" in dyld_provider or
+                re.search(r"/usr/lib/system/lib[^/]+\.dylib$", dyld_provider) is not None)
+    return provider in dyld_provider
+
+
+def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
+                      llvm: pathlib.Path, target_dir: pathlib.Path,
+                      label: str) -> tuple[bool, dict[str, str], str]:
+    """Compile exact symbols, link against one candidate provider, and validate binds.
+
+    Positive and negative controls use the SAME object. A text match in a
+    .tbd file cannot pass this probe. Failed links produce raw diagnostics.
     """
     source = target_dir / (label + ".c")
     obj = target_dir / (label + ".o")
     dylib = target_dir / (label + ".dylib")
     if not all(re.fullmatch(r"_[A-Za-z0-9_.$?+\-]+", symbol) for symbol in symbols):
-        raise ValueError("Unexpected symbol syntax in SDK probe")
+        raise ValueError(f"Unexpected guest symbol syntax in {provider} probe")
     references = [f"extern char factorio_probe_{n} __asm__({json.dumps(symbol)});"
                   for n, symbol in enumerate(symbols)]
     pointers = ", ".join(f"&factorio_probe_{n}" for n in range(len(symbols)))
@@ -129,109 +148,102 @@ def try_sdk_link(symbols: list[str], sdk: pathlib.Path,
     if cc.returncode:
         raise RuntimeError(f"iOS SDK probe compilation failed: {cc.stderr[-2500:]}")
 
-    # Guard against a wrong asm-label spelling or an optimizer removing the
-    # undefined reference. Without this check a linker success proves nothing.
     obj_undefined = run_tool(llvm, "llvm-nm", "--undefined-only", str(obj))
     undefined = symbols_defined(obj_undefined)
     absent = sorted(set(symbols) - undefined)
     if absent:
         raise RuntimeError(
-            f"SDK probe object does not reference the EXACT required symbols: {absent}. "
+            f"SDK probe object does not reference exact guest symbols: {absent}. "
             f"Object imports: {obj_undefined[-1800:]}")
 
     base = [str(ld), "-dylib", "-arch", "arm64", "-platform_version",
             "ios", MIN_IOS, SDK_VERSION, "-syslibroot", str(sdk),
-            "-undefined", "error", "-no_fixup_chains", "-lSystem"]
-    with_iokit = subprocess.run(base + ["-framework", "IOKit", "-o", str(dylib), str(obj)],
-                                capture_output=True, text=True, errors="replace")
-    if with_iokit.returncode:
+            "-undefined", "error", "-no_fixup_chains"]
+    # For non-libSystem tests, include the standard C runtime in both
+    # variants. For libSystem, omitting it is the *negative* control.
+    if provider != "libSystem":
+        base += ["-lSystem"]
+    with_provider = subprocess.run(
+        base + PROVIDER_LINK_FLAGS[provider] + ["-o", str(dylib), str(obj)],
+        capture_output=True, text=True, errors="replace")
+    if with_provider.returncode:
         return False, {}, (
-            "iOS-arm64 linker could not resolve requested symbols with IOKit: " +
-            (with_iokit.stderr + "\n" + with_iokit.stdout)[-2000:])
+            f"iOS-arm64 linker could not resolve requested symbols WITH {provider}: " +
+            (with_provider.stderr + "\n" + with_provider.stdout)[-2400:])
 
     expected = set(symbols)
     found: dict[str, str] = {}
-    bind_diagnostics: list[str] = []
+    details: list[str] = []
     for flag in ("--bind", "--lazy-bind"):
         output = run_tool(llvm, "llvm-objdump", "--macho", flag, str(dylib))
-        bind_diagnostics.append(flag + ": " + output[-1800:])
+        details.append(flag + ": " + output[-1300:])
         for line in output.splitlines():
-            cols = line.strip().split()
-            if len(cols) < 2 or cols[-1] not in expected:
+            fields = line.strip().split()
+            if len(fields) < 2 or fields[-1] not in expected:
                 continue
-            if "IOKit" in cols[-2]:
-                found[cols[-1]] = "direct Mach-O bind: " + line.strip()
+            if provider_matches_binding(provider, line):
+                found[fields[-1]] = "native Mach-O bind: " + line.strip()
 
     if len(symbols) == 1 and symbols[0] not in found:
-        # A positive link is not enough: compare the SAME object with IOKit
-        # omitted. If this fails but the positive link succeeds, the exact
-        # unresolved input requires IOKit (including its SDK reexports).
-        no_iokit = target_dir / (label + "-no-iokit.dylib")
-        negative = subprocess.run(base + ["-o", str(no_iokit), str(obj)],
-                                  capture_output=True, text=True, errors="replace")
+        without_provider = target_dir / (label + "-negative.dylib")
+        negative = subprocess.run(
+            base + ["-o", str(without_provider), str(obj)],
+            capture_output=True, text=True, errors="replace")
         if negative.returncode:
             found[symbols[0]] = (
-                "positive iOS-arm64 link with IOKit, negative control WITHOUT "
-                "IOKit failed for same exact-symbol object; linker contrast")
+                f"positive iOS-arm64 SDK link WITH {provider}; exact-symbol "
+                f"negative link WITHOUT {provider} failed")
         else:
             return True, found, (
-                "LINK SUCCEEDED EVEN WITHOUT IOKit; cannot credit its reexport. " +
-                "Dyld binding excerpt:\n" + "\n".join(bind_diagnostics)[-2600:])
+                f"LINK ALSO SUCCEEDED WITHOUT {provider}; cannot attribute it. "
+                + "\n".join(details)[-2200:])
 
     return True, found, (
-        "SDK linker accepted symbols, but not all provider bindings were "
-        "confirmed. Inspect classic dyld binding excerpts:\n" +
-        "\n".join(bind_diagnostics)[-2600:]) if len(found) != len(symbols) else ""
+        f"SDK link with {provider} passed, but provider not established for "
+        f"{sorted(set(symbols)-set(found))}. Dyld evidence:\n" +
+        "\n".join(details)[-2400:]) if len(found) != len(symbols) else ""
 
 
-def probe_iokit_symbols(symbols: list[str], sdk: pathlib.Path,
-                        llvm: pathlib.Path, tempdir: pathlib.Path,
-                        report_dir: pathlib.Path
-                        ) -> tuple[dict[str, str], dict[str, str]]:
-    """Resolve SDK candidates with group probes and exact negative controls.
-
-    A successful group link is efficient; ambiguous symbols are bisected
-    until each has independent evidence. No unresolved symbol is silently
-    marked as satisfied merely because its spelling appears in an SDK stub.
-    """
+def probe_provider_symbols(symbols: list[str], provider: str,
+                           sdk: pathlib.Path, llvm: pathlib.Path,
+                           tempdir: pathlib.Path, report_dir: pathlib.Path
+                           ) -> tuple[dict[str, str], dict[str, str]]:
+    """Bisect ambiguous imports until each has direct or linker-control evidence."""
     if not sdk.is_dir():
-        raise FileNotFoundError(f"Cannot verify iOS-arm64 IOKit exports without SDK: {sdk}")
+        raise FileNotFoundError(f"Cannot verify iOS-arm64 exports without SDK: {sdk}")
     for name in ("clang.exe", "ld64.lld.exe", "llvm-nm.exe", "llvm-objdump.exe"):
         if not (llvm / name).is_file():
             raise FileNotFoundError(f"SDK-link probe tool missing: {llvm / name}")
     verified: dict[str, str] = {}
     unverified: dict[str, str] = {}
     attempts: list[dict[str, object]] = []
-    attempt = 0
+    count = 0
 
     def check(group: list[str]) -> None:
-        nonlocal attempt
+        nonlocal count
         if not group:
             return
-        attempt += 1
-        ok, bound, detail = try_sdk_link(group, sdk, llvm, tempdir, f"probe_{attempt}")
-        attempts.append({"symbols": group, "linked_with_iokit": ok,
-                         "verified_symbols": list(bound), "diagnostic": detail})
+        count += 1
+        ok, bound, diagnostic = try_provider_link(
+            group, provider, sdk, llvm, tempdir, f"{provider}_{count}")
+        attempts.append({"symbols": group, "linked_with_provider": ok,
+                         "verified_symbols": list(bound), "diagnostic": diagnostic})
         verified.update(bound)
-        remaining = [x for x in group if x not in bound]
+        remaining = [name for name in group if name not in bound]
         if not remaining:
             return
         if len(remaining) == 1:
-            symbol = remaining[0]
-            # If this came from a multi-symbol link, isolate it to get its
-            # own positive/negative controls before recording a conclusion.
             if len(group) != 1:
-                check([symbol])
+                check([remaining[0]])
             else:
-                unverified[symbol] = detail or "SDK provider not demonstrated"
+                unverified[remaining[0]] = diagnostic or "Provider not demonstrated"
             return
-        if not ok or len(remaining) > 1:
-            mid = len(remaining) // 2
-            check(remaining[:mid])
-            check(remaining[mid:])
+        mid = len(remaining) // 2
+        check(remaining[:mid])
+        check(remaining[mid:])
 
     check(symbols)
-    (report_dir / "link-probe-attempts.json").write_text(
+    (report_dir / f"link-probe-attempts-{provider}.json").write_text(
         json.dumps(attempts, indent=2), encoding="utf-8")
     return verified, unverified
 
@@ -299,12 +311,27 @@ def main() -> int:
         (args.report_dir / "compat-reexport-loads.txt").write_text(
             "\n".join(reexports) + ("\n" if reexports else ""),
             encoding="utf-8")
-        verified_iokit: dict[str, str] = {}
-        unverified_reexport: dict[str, str] = {}
-        if missing_direct and any(is_iokit_reexport(path) for path in reexports):
-            verified_iokit, unverified_reexport = probe_iokit_symbols(
-                missing_direct, args.sdk, args.llvm_bin, tempdir, args.report_dir)
-        genuine_remaining = sorted(set(missing_direct) - set(verified_iokit))
+        provider_reexport_paths = {
+            "IOKit": [name for name in reexports if is_iokit_reexport(name)],
+            "MobileCoreServices": [name for name in reexports if
+                re.search(r"/MobileCoreServices\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", name)],
+            "libSystem": [name for name in reexports if
+                re.search(r"/libSystem(?:\.B)?\.dylib$", name)],
+        }
+        verified_by_provider: dict[str, dict[str, str]] = {}
+        unverified_by_provider: dict[str, dict[str, str]] = {}
+        outstanding = list(missing_direct)
+        for provider in PROVIDER_LINK_FLAGS:
+            if not outstanding or not provider_reexport_paths[provider]:
+                continue
+            verified, rejected = probe_provider_symbols(
+                outstanding, provider, args.sdk, args.llvm_bin, tempdir,
+                args.report_dir)
+            verified_by_provider[provider] = verified
+            unverified_by_provider[provider] = rejected
+            outstanding = sorted(set(outstanding) - set(verified))
+        genuine_remaining = outstanding
+        verified_iokit = verified_by_provider.get("IOKit", {})
         (args.report_dir / "verified-iokit-reexports.txt").write_text(
             "\n".join(sorted(verified_iokit)) + ("\n" if verified_iokit else ""),
             encoding="utf-8")
@@ -318,11 +345,10 @@ def main() -> int:
             "weak_compat_bindings": len(optional),
             "missing_direct_exports": len(missing_direct),
             "reexport_load_commands": reexports,
+            "provider_reexport_paths": provider_reexport_paths,
             "verified_iokit_reexports": verified_iokit,
-            "sdk_probe_unverified_reasons": {
-                key: unverified_reexport.get(key, "No matching verified IOKit reexport; investigate original provider and ABI")
-                for key in genuine_remaining
-            },
+            "verified_by_provider": verified_by_provider,
+            "probe_failures_by_provider": unverified_by_provider,
             "remaining_unverified_strong": genuine_remaining,
             "platform": f"arm64-apple-ios{MIN_IOS}",
             "sdk": str(args.sdk),
@@ -336,7 +362,8 @@ def main() -> int:
         print(f"FactorioCompat strong/lazy guest bindings: {len(required)}")
         print(f"FactorioCompat weak guest bindings: {len(optional)}")
         print(f"Missing strong/lazy DIRECT exports: {len(missing_direct)}")
-        print(f"Verified via native IOKit LC_REEXPORT_DYLIB and iOS-arm64 SDK link: {len(verified_iokit)}")
+        for provider, verified in verified_by_provider.items():
+            print(f"Verified via {provider} LC_REEXPORT_DYLIB and iOS-arm64 SDK link: {len(verified)}")
         print(f"REMAINING UNVERIFIED strong/lazy FactorioCompat bindings: {len(genuine_remaining)}")
         for symbol in genuine_remaining[:60]:
             print(f"  UNRESOLVED {symbol}")
