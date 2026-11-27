@@ -366,7 +366,7 @@ def main() -> int:
         verified_by_provider: dict[str, dict[str, str]] = {}
         unverified_by_provider: dict[str, dict[str, str]] = {}
         outstanding = list(missing_direct)
-        for provider in PROVIDER_LINK_FLAGS:
+        for provider in ("IOKit", "MobileCoreServices", "libSystem"):
             if not outstanding or not provider_reexport_paths[provider]:
                 continue
             verified, rejected = probe_provider_symbols(
