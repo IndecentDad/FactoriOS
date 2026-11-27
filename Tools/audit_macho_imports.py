@@ -130,7 +130,7 @@ PROVIDER_LINK_FLAGS = {
 def native_provider_from_line(line: str) -> tuple[str | None, str | None]:
     """Return (normalized SDK provider, symbol) for a native guest import."""
     cols = line.strip().split()
-    if len(cols) < 3 or not re.fullmatch(r"_[A-Za-z0-9_.$?+\\-]+", cols[-1]):
+    if len(cols) < 3 or not re.fullmatch(r"_[A-Za-z0-9_.$?+-]+", cols[-1]):
         return None, None
     raw_provider = cols[-2]
     if "FactorioCompat" in raw_provider:
@@ -139,11 +139,11 @@ def native_provider_from_line(line: str) -> tuple[str | None, str | None]:
     # for Foundation. llvm-objdump may show names or full install paths.
     name = raw_provider.split("/")[-1]
     if name.endswith(".dylib"):
-        name = re.sub(r"(?:\\.[AB])?\\.dylib$", "", name)
+        name = re.sub(r"(?:\.[AB])?\.dylib$", "", name)
     if name in PROVIDER_LINK_FLAGS:
         return name, cols[-1]
     # Known framework install-name aliases (including macOS versioned paths).
-    frame = re.search(r"/([^/]+)\\.framework/(?:Versions/[^/]+/)?[^/]+$", raw_provider)
+    frame = re.search(r"/([^/]+)\.framework/(?:Versions/[^/]+/)?[^/]+$", raw_provider)
     if frame and frame.group(1) in PROVIDER_LINK_FLAGS:
         return frame.group(1), cols[-1]
     return raw_provider, cols[-1]
