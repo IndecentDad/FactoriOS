@@ -16,6 +16,13 @@ LD, READOBJ = LLVM / "ld64.lld.exe", LLVM / "llvm-readobj.exe"
 FRAMEWORKS = ["Foundation", "UIKit", "QuartzCore", "CoreGraphics", "CoreFoundation",
               "GameController", "Metal", "AudioToolbox", "CoreAudio", "CoreVideo",
               "Security", "IOKit", "MobileCoreServices", "AVFAudio"]
+# The upstream Xcode FactorioCompat.xcconfig also reexports CoreServices.
+# If the Windows-extracted iPhoneOS SDK provides a linkable CoreServices stub,
+# reproduce that exact reexport. Otherwise MobileCoreServices (already a
+# confirmed provider of the legacy UTType symbols) is the iOS fallback.
+CORE_SERVICES_SDK = SDK / "System" / "Library" / "Frameworks" / "CoreServices.framework"
+if CORE_SERVICES_SDK.is_dir() and any(CORE_SERVICES_SDK.rglob("*.tbd")):
+    FRAMEWORKS.append("CoreServices")
 # Keep the original upstream patcher's two-level dylib routing intact:
 # every native iOS framework whose macOS name is rewritten to FactorioCompat
 # MUST be reexported by FactorioCompat, unless the shim implements the export.
