@@ -185,7 +185,8 @@ def try_sdk_link(symbols: list[str], sdk: pathlib.Path,
 
 
 def probe_iokit_symbols(symbols: list[str], sdk: pathlib.Path,
-                        llvm: pathlib.Path, tempdir: pathlib.Path
+                        llvm: pathlib.Path, tempdir: pathlib.Path,
+                        report_dir: pathlib.Path
                         ) -> tuple[dict[str, str], dict[str, str]]:
     """Resolve SDK candidates with group probes and exact negative controls.
 
@@ -230,7 +231,7 @@ def probe_iokit_symbols(symbols: list[str], sdk: pathlib.Path,
             check(remaining[mid:])
 
     check(symbols)
-    (tempdir.parent / "factorios-link-probe-attempts.json").write_text(
+    (report_dir / "link-probe-attempts.json").write_text(
         json.dumps(attempts, indent=2), encoding="utf-8")
     return verified, unverified
 
@@ -302,7 +303,7 @@ def main() -> int:
         unverified_reexport: dict[str, str] = {}
         if missing_direct and any(is_iokit_reexport(path) for path in reexports):
             verified_iokit, unverified_reexport = probe_iokit_symbols(
-                missing_direct, args.sdk, args.llvm_bin, tempdir)
+                missing_direct, args.sdk, args.llvm_bin, tempdir, args.report_dir)
         genuine_remaining = sorted(set(missing_direct) - set(verified_iokit))
         (args.report_dir / "verified-iokit-reexports.txt").write_text(
             "\n".join(sorted(verified_iokit)) + ("\n" if verified_iokit else ""),
