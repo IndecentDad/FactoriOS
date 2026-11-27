@@ -102,17 +102,18 @@ def is_iokit_reexport(path: str) -> bool:
 def try_sdk_link(symbols: list[str], sdk: pathlib.Path,
                  llvm: pathlib.Path, target_dir: pathlib.Path,
                  label: str) -> tuple[bool, dict[str, str], str]:
-    """Make a real arm64/iOS link probe, then inspect its exact dylib bindings.
+    """Prove IOKit imports using a targeted iOS link and provider verification.
 
-    A text hit in an SDK .tbd is NOT evidence of an iOS-arm64 export.
-    ld64.lld checks target-specific exports. Only symbols bound to IOKit in
-    the resulting Mach-O can be credited to the IOKit reexport.
+    Unlike the previous implementation, this uses -no_fixup_chains so the
+    classic dyld bind table is inspectable. If a single-symbol probe links
+    but no IOKit bind is printed, an exact-symbol negative-control link
+    without IOKit can distinguish the framework requirement.
     """
     source = target_dir / (label + ".c")
     obj = target_dir / (label + ".o")
     dylib = target_dir / (label + ".dylib")
     if not all(re.fullmatch(r"_[A-Za-z0-9_.$?+\-]+", symbol) for symbol in symbols):
-        return False, {}, "Unexpected symbol syntax in SDK probe"
+        raise ValueError("Unexpected symbol syntax in SDK probe")
     references = [f"extern char factorio_probe_{n} __asm__({json.dumps(symbol)});"
                   for n, symbol in enumerate(symbols)]
     pointers = ", ".join(f"&factorio_probe_{n}" for n in range(len(symbols)))
@@ -127,43 +128,79 @@ def try_sdk_link(symbols: list[str], sdk: pathlib.Path,
                         capture_output=True, text=True, errors="replace")
     if cc.returncode:
         raise RuntimeError(f"iOS SDK probe compilation failed: {cc.stderr[-2500:]}")
-    command = [str(ld), "-dylib", "-arch", "arm64", "-platform_version",
-               "ios", MIN_IOS, SDK_VERSION, "-syslibroot", str(sdk),
-               "-undefined", "error", "-lSystem", "-framework", "IOKit",
-               "-o", str(dylib), str(obj)]
-    link = subprocess.run(command, capture_output=True, text=True, errors="replace")
-    if link.returncode:
-        return False, {}, (link.stderr + "\n" + link.stdout)[-2200:]
+
+    # Guard against a wrong asm-label spelling or an optimizer removing the
+    # undefined reference. Without this check a linker success proves nothing.
+    obj_undefined = run_tool(llvm, "llvm-nm", "--undefined-only", str(obj))
+    undefined = symbols_defined(obj_undefined)
+    absent = sorted(set(symbols) - undefined)
+    if absent:
+        raise RuntimeError(
+            f"SDK probe object does not reference the EXACT required symbols: {absent}. "
+            f"Object imports: {obj_undefined[-1800:]}")
+
+    base = [str(ld), "-dylib", "-arch", "arm64", "-platform_version",
+            "ios", MIN_IOS, SDK_VERSION, "-syslibroot", str(sdk),
+            "-undefined", "error", "-no_fixup_chains", "-lSystem"]
+    with_iokit = subprocess.run(base + ["-framework", "IOKit", "-o", str(dylib), str(obj)],
+                                capture_output=True, text=True, errors="replace")
+    if with_iokit.returncode:
+        return False, {}, (
+            "iOS-arm64 linker could not resolve requested symbols with IOKit: " +
+            (with_iokit.stderr + "\n" + with_iokit.stdout)[-2000:])
+
     expected = set(symbols)
-    providers: dict[str, str] = {}
+    found: dict[str, str] = {}
+    bind_diagnostics: list[str] = []
     for flag in ("--bind", "--lazy-bind"):
         output = run_tool(llvm, "llvm-objdump", "--macho", flag, str(dylib))
+        bind_diagnostics.append(flag + ": " + output[-1800:])
         for line in output.splitlines():
             cols = line.strip().split()
             if len(cols) < 2 or cols[-1] not in expected:
                 continue
-            # Link success alone is not enough: a symbol bound to libSystem
-            # does not become a reexport of IOKit.
             if "IOKit" in cols[-2]:
-                providers[cols[-1]] = line.strip()
-    return True, providers, ""
+                found[cols[-1]] = "direct Mach-O bind: " + line.strip()
+
+    if len(symbols) == 1 and symbols[0] not in found:
+        # A positive link is not enough: compare the SAME object with IOKit
+        # omitted. If this fails but the positive link succeeds, the exact
+        # unresolved input requires IOKit (including its SDK reexports).
+        no_iokit = target_dir / (label + "-no-iokit.dylib")
+        negative = subprocess.run(base + ["-o", str(no_iokit), str(obj)],
+                                  capture_output=True, text=True, errors="replace")
+        if negative.returncode:
+            found[symbols[0]] = (
+                "positive iOS-arm64 link with IOKit, negative control WITHOUT "
+                "IOKit failed for same exact-symbol object; linker contrast")
+        else:
+            return True, found, (
+                "LINK SUCCEEDED EVEN WITHOUT IOKit; cannot credit its reexport. " +
+                "Dyld binding excerpt:\n" + "\n".join(bind_diagnostics)[-2600:])
+
+    return True, found, (
+        "SDK linker accepted symbols, but not all provider bindings were "
+        "confirmed. Inspect classic dyld binding excerpts:\n" +
+        "\n".join(bind_diagnostics)[-2600:]) if len(found) != len(symbols) else ""
 
 
 def probe_iokit_symbols(symbols: list[str], sdk: pathlib.Path,
                         llvm: pathlib.Path, tempdir: pathlib.Path
                         ) -> tuple[dict[str, str], dict[str, str]]:
-    """Bisect an unsuccessful SDK link to pinpoint unavailable imports.
+    """Resolve SDK candidates with group probes and exact negative controls.
 
-    Usually all IOKit symbols resolve in one probe; if a few fail, only
-    their partitions are retried. All evidence is retained in a JSON report.
+    A successful group link is efficient; ambiguous symbols are bisected
+    until each has independent evidence. No unresolved symbol is silently
+    marked as satisfied merely because its spelling appears in an SDK stub.
     """
     if not sdk.is_dir():
         raise FileNotFoundError(f"Cannot verify iOS-arm64 IOKit exports without SDK: {sdk}")
-    for name in ("clang.exe", "ld64.lld.exe", "llvm-objdump.exe"):
+    for name in ("clang.exe", "ld64.lld.exe", "llvm-nm.exe", "llvm-objdump.exe"):
         if not (llvm / name).is_file():
             raise FileNotFoundError(f"SDK-link probe tool missing: {llvm / name}")
     verified: dict[str, str] = {}
     unverified: dict[str, str] = {}
+    attempts: list[dict[str, object]] = []
     attempt = 0
 
     def check(group: list[str]) -> None:
@@ -172,23 +209,29 @@ def probe_iokit_symbols(symbols: list[str], sdk: pathlib.Path,
             return
         attempt += 1
         ok, bound, detail = try_sdk_link(group, sdk, llvm, tempdir, f"probe_{attempt}")
-        if ok:
-            for symbol in group:
-                if symbol in bound:
-                    verified[symbol] = bound[symbol]
-                else:
-                    unverified[symbol] = (
-                        "SDK probe linked, but no IOKit-bound import was found "
-                        "in the result's dyld bind table")
+        attempts.append({"symbols": group, "linked_with_iokit": ok,
+                         "verified_symbols": list(bound), "diagnostic": detail})
+        verified.update(bound)
+        remaining = [x for x in group if x not in bound]
+        if not remaining:
             return
-        if len(group) == 1:
-            unverified[group[0]] = "iOS arm64 SDK linker could not resolve: " + detail
+        if len(remaining) == 1:
+            symbol = remaining[0]
+            # If this came from a multi-symbol link, isolate it to get its
+            # own positive/negative controls before recording a conclusion.
+            if len(group) != 1:
+                check([symbol])
+            else:
+                unverified[symbol] = detail or "SDK provider not demonstrated"
             return
-        mid = len(group) // 2
-        check(group[:mid])
-        check(group[mid:])
+        if not ok or len(remaining) > 1:
+            mid = len(remaining) // 2
+            check(remaining[:mid])
+            check(remaining[mid:])
 
     check(symbols)
+    (tempdir.parent / "factorios-link-probe-attempts.json").write_text(
+        json.dumps(attempts, indent=2), encoding="utf-8")
     return verified, unverified
 
 
