@@ -84,10 +84,13 @@ def _load_commands(data: bytearray) -> LoadCommands:
 
 
 def _framework(name: str) -> str:
-    if "FactorioCompat.framework/FactorioCompat" in name:
-        return "FactorioCompat"
-    if "Foundation.framework/" in name:
-        return "Foundation"
+    # Match the complete framework name, not a substring: CoreFoundation
+    # must never be mistaken for Foundation when selecting a dylib ordinal.
+    if ".framework/" not in name:
+        return ""
+    provider = name.split(".framework/", 1)[0].rsplit("/", 1)[-1]
+    if provider in {"Foundation", "FactorioCompat"}:
+        return provider
     return ""
 
 
