@@ -588,6 +588,12 @@ def patch(path):
         GUEST_ID
     )
 
+    # Redirect the macOS-only NSAppleEventManager class at its individual
+    # dyld binding, NOT the whole Foundation framework. Native Foundation
+    # symbols continue to resolve from iOS Foundation.
+    from rebind_guest_symbols import rebind_macos_classes
+    rebind_macos_classes(data)
+
     path.write_bytes(data)
 
     print()
