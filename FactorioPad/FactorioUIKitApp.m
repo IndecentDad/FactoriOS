@@ -730,23 +730,27 @@
   CGRect bounds = self.view.bounds;
   UIEdgeInsets safe = self.view.safeAreaInsets;
   CGRect usable = UIEdgeInsetsInsetRect(bounds, safe);
-  // A single unfolded Duo scene is two landscape panels in portrait.
-  // Do not apply this split to ordinary narrow iPhones or iPads.
-  BOOL duoPortrait =
+  // The unfolded Duo presents two broad panels under one UIWindowScene.
+  // Draw the game full bleed across the scene in landscape; keep floating
+  // controls within the actual (potentially asymmetric) UIKit safe area.
+  // Other devices keep the conventional safe-area game viewport.
+  BOOL unfoldedDuo =
       UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone &&
-      CGRectGetHeight(bounds) > CGRectGetWidth(bounds) * 1.15 &&
-      CGRectGetWidth(bounds) >= 600;
-  CGRect gameRect = usable, controlsRect = usable;
+      MIN(CGRectGetWidth(bounds), CGRectGetHeight(bounds)) >= 600;
+  BOOL duoPortrait = unfoldedDuo &&
+      CGRectGetHeight(bounds) > CGRectGetWidth(bounds) * 1.15;
+  CGRect gameRect = unfoldedDuo ? bounds : usable;
+  CGRect controlsRect = usable;
   if (duoPortrait) {
     CGFloat hinge = CGRectGetMidY(bounds);
-    gameRect.size.height = MAX(1, hinge - CGRectGetMinY(usable) - 3);
+    gameRect = CGRectMake(0, 0, CGRectGetWidth(bounds), MAX(1, hinge - 3));
     CGFloat controlsTop = hinge + 3;
     controlsRect = CGRectMake(CGRectGetMinX(usable), controlsTop,
                               CGRectGetWidth(usable),
                               MAX(1, CGRectGetMaxY(usable) - controlsTop));
   }
-  // Rely on actual asymmetric scene safe areas, not the former blanket
-  // 16-point phone padding that needlessly shrank the game on the Duo.
+  // No blanket phone padding. Metal and SDL must use the same current
+  // gameView bounds, including changes caused by unfolding or rotation.
   self.gameView.frame = CGRectIntegral(gameRect);
   self.touchPad.frame = CGRectIntegral(controlsRect);
   [self.gameView setNeedsLayout];
@@ -755,14 +759,15 @@
   UIWindowScene *scene = self.view.window.windowScene;
   CAMetalLayer *metal = (CAMetalLayer *)self.gameView.layer;
   [FactorioLoader logMessage:[NSString stringWithFormat:
-      @"Duo geometry scene=%@ window=%@ safe=%@ game=%@ touch=%@ "
-       @"drawable=%@ orientation=%ld duoPortrait=%d",
+      @"Duo geometry scene=%@ window=%@ screen=%@ safe=%@ game=%@ touch=%@ "
+       @"drawable=%@ orientation=%ld unfolded=%d duoPortrait=%d",
       NSStringFromCGRect(scene.coordinateSpace.bounds),
       NSStringFromCGRect(self.view.window.bounds),
-      NSStringFromUIEdgeInsets(safe), NSStringFromCGRect(self.gameView.frame),
+      NSStringFromCGRect(scene.screen.bounds), NSStringFromUIEdgeInsets(safe),
+      NSStringFromCGRect(self.gameView.frame),
       NSStringFromCGRect(self.touchPad.frame),
       NSStringFromCGSize(metal.drawableSize),
-      (long)scene.interfaceOrientation, duoPortrait]];
+      (long)scene.interfaceOrientation, unfoldedDuo, duoPortrait]];
 }
 @end
 
