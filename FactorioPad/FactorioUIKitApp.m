@@ -37,6 +37,14 @@
 @property(nonatomic) UIEventButtonMask mouseButtons;
 @end
 @implementation FactorioGameView
+- (BOOL)usesRawMouse {
+  if (self.mice.count == 0)
+    return NO;
+  if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone)
+    return YES;
+  UIWindowScene *scene = self.window.windowScene;
+  return scene.pointerLockState.locked;
+}
 + (Class)layerClass {
   return FactorioMetalLayer.class;
 }
@@ -60,11 +68,19 @@
         initWithTarget:self
                 action:@selector(pointerHovered:)];
     [self addGestureRecognizer:h];
-    [[NSNotificationCenter defaultCenter]
-        addObserver:self
-           selector:@selector(mouseConnected:)
-               name:GCMouseDidConnectNotification
-             object:nil];
+    UIPanGestureRecognizer *scroll = [[UIPanGestureRecognizer alloc]
+        initWithTarget:self action:@selector(pointerScrolled:)];
+    scroll.allowedScrollTypesMask = UIScrollTypeMaskAll;
+    scroll.allowedTouchTypes = @[];
+    scroll.cancelsTouchesInView = NO;
+    [self addGestureRecognizer:scroll];
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    [center addObserver:self selector:@selector(mouseConnected:)
+                   name:GCMouseDidConnectNotification object:nil];
+    [center addObserver:self selector:@selector(mouseDisconnected:)
+                   name:GCMouseDidDisconnectNotification object:nil];
+    [center addObserver:self selector:@selector(pointerLockChanged:)
+                   name:UIPointerLockStateDidChangeNotification object:nil];
     for (GCMouse *m in GCMouse.mice)
       [self installMouse:m];
   }
@@ -101,15 +117,63 @@
     return UIPointerStyle.hiddenPointerStyle;
   return nil;
 }
+- (void)updateMouseButtons:(UIEventButtonMask)buttons at:(CGPoint)p {
+  UIEventButtonMask masks[] = {
+      UIEventButtonMaskPrimary, UIEventButtonMaskSecondary,
+      UIEventButtonMaskForButtonNumber(3)};
+  const int buttonsToSend[] = {1, 3, 2};
+  for (NSUInteger i = 0; i < 3; ++i) {
+    BOOL wasPressed = (self.mouseButtons & masks[i]) != 0;
+    BOOL isPressed = (buttons & masks[i]) != 0;
+    if (wasPressed != isPressed)
+      FactorioMouseButton(buttonsToSend[i], isPressed, (int)p.x, (int)p.y);
+  }
+  self.mouseButtons = buttons;
+}
+- (void)pointerEvent:(UITouch *)touch buttons:(UIEventButtonMask)buttons {
+  CGPoint p = [touch locationInView:self];
+  [self movePointer:p];
+  [self updateMouseButtons:buttons at:p];
+}
 - (void)pointerHovered:(UIHoverGestureRecognizer *)g {
-  if (g.state == UIGestureRecognizerStateBegan ||
-      g.state == UIGestureRecognizerStateChanged)
+  if (![self usesRawMouse] &&
+      UIApplication.sharedApplication.applicationState == UIApplicationStateActive &&
+      (g.state == UIGestureRecognizerStateBegan ||
+       g.state == UIGestureRecognizerStateChanged))
     [self movePointer:[g locationInView:self]];
+}
+- (void)pointerScrolled:(UIPanGestureRecognizer *)g {
+  if ([self usesRawMouse] ||
+      UIApplication.sharedApplication.applicationState != UIApplicationStateActive ||
+      (g.state != UIGestureRecognizerStateBegan &&
+       g.state != UIGestureRecognizerStateChanged))
+    return;
+  CGPoint delta = [g translationInView:self];
+  [g setTranslation:CGPointZero inView:self];
+  self.scrollRemainder.x += delta.x / 20.0;
+  self.scrollRemainder.y -= delta.y / 20.0;
+  int sx = (int)trunc(self.scrollRemainder.x);
+  int sy = (int)trunc(self.scrollRemainder.y);
+  self.scrollRemainder.x -= sx;
+  self.scrollRemainder.y -= sy;
+  if (sx || sy)
+    FactorioMouseWheel(sx, sy);
+}
+- (void)pointerLockChanged:(NSNotification *)n {
+  self.scrollRemainder = CGPointZero;
+  [self updateMouseButtons:0 at:self.pointerPosition];
 }
 - (void)mouseConnected:(NSNotification *)n {
   GCMouse *m = n.object;
   if (m)
     [self installMouse:m];
+}
+- (void)mouseDisconnected:(NSNotification *)n {
+  GCMouse *m = n.object;
+  if (m)
+    [self.mice removeObject:m];
+  self.scrollRemainder = CGPointZero;
+  [self updateControllerCursor];
 }
 - (void)installMouse:(GCMouse *)m {
   if ([self.mice containsObject:m] || !m.mouseInput)
@@ -120,7 +184,8 @@
   GCMouseInput *input = m.mouseInput;
   input.mouseMovedHandler = ^(GCMouseInput *mouse, float dx, float dy) {
     typeof(self) self = weak;
-    if (!self)
+    if (!self || ![self usesRawMouse] ||
+        UIApplication.sharedApplication.applicationState != UIApplicationStateActive)
       return;
     CGPoint p = self.pointerPosition;
     p.x += dx;
@@ -130,7 +195,7 @@
   input.leftButton.pressedChangedHandler =
       ^(GCControllerButtonInput *b, float v, BOOL down) {
         typeof(self) self = weak;
-        if (self) {
+        if (self && [self usesRawMouse]) {
           CGPoint p = self.pointerPosition;
           FactorioMouseButton(1, down, (int)p.x, (int)p.y);
         }
@@ -138,7 +203,7 @@
   input.rightButton.pressedChangedHandler =
       ^(GCControllerButtonInput *b, float v, BOOL down) {
         typeof(self) self = weak;
-        if (self) {
+        if (self && [self usesRawMouse]) {
           CGPoint p = self.pointerPosition;
           FactorioMouseButton(3, down, (int)p.x, (int)p.y);
         }
@@ -146,7 +211,7 @@
   input.middleButton.pressedChangedHandler =
       ^(GCControllerButtonInput *b, float v, BOOL down) {
         typeof(self) self = weak;
-        if (self) {
+        if (self && [self usesRawMouse]) {
           CGPoint p = self.pointerPosition;
           FactorioMouseButton(2, down, (int)p.x, (int)p.y);
         }
@@ -154,7 +219,7 @@
   input.scroll.valueChangedHandler = ^(GCControllerDirectionPad *scroll,
                                        float x, float y) {
     typeof(self) self = weak;
-    if (self) {
+    if (self && [self usesRawMouse]) {
       self.scrollRemainder =
           CGPointMake(self.scrollRemainder.x + x, self.scrollRemainder.y + y);
       int sx = (int)trunc(self.scrollRemainder.x),
@@ -207,24 +272,49 @@
 }
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
   for (UITouch *t in ts) {
+    if (t.type == UITouchTypeIndirectPointer) {
+      if (![self usesRawMouse])
+        [self pointerEvent:t buttons:e.buttonMask];
+      continue;
+    }
     CGPoint p = [t locationInView:self];
     FactorioTouchBegin(p.x, p.y);
   }
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
   for (UITouch *t in ts) {
+    if (t.type == UITouchTypeIndirectPointer) {
+      if (![self usesRawMouse])
+        [self pointerEvent:t buttons:e.buttonMask];
+      continue;
+    }
     CGPoint p = [t locationInView:self];
     FactorioTouchMove(p.x, p.y);
   }
 }
 - (void)touchesEnded:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
   for (UITouch *t in ts) {
+    if (t.type == UITouchTypeIndirectPointer) {
+      if (![self usesRawMouse])
+        [self pointerEvent:t buttons:0];
+      continue;
+    }
     CGPoint p = [t locationInView:self];
     FactorioTouchEnd(p.x, p.y);
   }
 }
 - (void)touchesCancelled:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
-  FactorioTouchCancel();
+  BOOL cancelledTouch = NO;
+  for (UITouch *t in ts) {
+    if (t.type == UITouchTypeIndirectPointer) {
+      if (![self usesRawMouse])
+        [self updateMouseButtons:0 at:[t locationInView:self]];
+    } else {
+      cancelledTouch = YES;
+    }
+  }
+  if (cancelledTouch)
+    FactorioTouchCancel();
 }
 - (void)pressesBegan:(NSSet<UIPress *> *)ps withEvent:(UIPressesEvent *)e {
   NSMutableSet *other = [NSMutableSet set];
