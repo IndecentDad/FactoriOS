@@ -28,6 +28,41 @@ compiler errors, code differences, linker failures, or test failures.**
 
 ## New evidence and immediate work
 
+## Fifth-build priority: confirmed newer iPhone Duo log
+
+The user supplied FactorioPad(20261127-015510).log. Its newest startup
+is 2026-11-27 01:52:43 UTC and proves source afccbc9a... from the embedded
+build stamp, rather than a stale IPA. The real dlopen failure in THAT build:
+  Symbol not found: _kCGDisplayShowDuplicateLowResolutionModes
+  Referenced from: FactorioGuest
+  Expected in: /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+
+This is distinct from the earlier NSAppleEventManager failure, which the
+afccbc9 package now passes. The earlier name appeared in old accumulated
+sessions in the same FactorioPad.log. Always use the newest startup entry.
+
+CRITICAL SOURCE FINDING: FactorioCompat/CoreGraphicsShims.m ALREADY defines
+and exports kCGDisplayShowDuplicateLowResolutionModes. This is an incorrect
+Mach-O two-level native CoreGraphics dylib ordinal, not a missing shim.
+
+Committed follow-up changes include:
+- Tools/rebind_guest_symbols.py now remaps this exact CG constant from
+  CoreGraphics to FactorioCompat alongside NSAppleEventManager.
+- Tests/test_rebind_guest_symbols.py covers the CoreGraphics import ordinal.
+- Tools/build_private_duo.py and Tools/audit_macho_imports.py validate both
+  imports are routed to FactorioCompat and exported by the packaged shim.
+
+NEXT: pull newest experiment branch, run all targeted binding tests, then run
+the FULL expanded native-provider audit on the EXISTING afccbc9 IPA to
+understand exactly why its previous audit exited 1. Do not recompile until
+all discoverable native provider gaps have been analyzed and fixed, or a
+source change truly necessitates a fresh IPA.
+
+When ready, build one corrected IPA with a newly patched original game
+guest and version-stamped native app. Then run the complete expanded audit
+before another device installation. Continue autonomously per AGENTS.md.
+
+
 The user's fresh FactorioPad(10).log confirms the newest **actual** device
 failure (2026-11-27 01:37 UTC) occurs inside FactorioGuest dlopen:
   Symbol not found: _OBJC_CLASS_$_NSAppleEventManager
