@@ -2,7 +2,7 @@
 """Precisely route macOS-only guest imports to FactorioCompat without redirecting Foundation.
 
 Rebinds library ordinals in Mach-O chained import tables or classic dyld bind
-streams. Never rewrites an entire native Foundation dependency. Refuses to
+streams. Never rewrites an entire native Foundation or CoreGraphics dependency. Refuses to
 silently proceed if a required symbol is absent, bound to an unexpected
 library, or uses an unsupported layout.
 
@@ -16,6 +16,7 @@ from dataclasses import dataclass
 # symbol -> (original provider framework, desired provider framework)
 REBINDS = {
     "_OBJC_CLASS_$_NSAppleEventManager": ("Foundation", "FactorioCompat"),
+    "_kCGDisplayShowDuplicateLowResolutionModes": ("CoreGraphics", "FactorioCompat"),
 }
 LC_SEGMENT_64 = 0x19
 LC_DYLD_INFO = 0x22
@@ -89,7 +90,7 @@ def _framework(name: str) -> str:
     if ".framework/" not in name:
         return ""
     provider = name.split(".framework/", 1)[0].rsplit("/", 1)[-1]
-    if provider in {"Foundation", "FactorioCompat"}:
+    if provider in {"Foundation", "CoreGraphics", "FactorioCompat"}:
         return provider
     return ""
 
@@ -98,9 +99,14 @@ def _resolve_ordinals(libraries: list[str]) -> dict[str, int]:
     result: dict[str, int] = {}
     for i, name in enumerate(libraries, 1):
         result.setdefault(_framework(name), i)
-    if not result.get("Foundation") or not result.get("FactorioCompat"):
+    required_providers = set()
+    for original, target in REBINDS.values():
+        required_providers.add(original)
+        required_providers.add(target)
+    missing_providers = sorted(p for p in required_providers if not result.get(p))
+    if missing_providers:
         raise ValueError(
-            "Guest has no native Foundation and/or FactorioCompat library ordinal; "
+            f"Guest missing dylib ordinals for {missing_providers}; "
             f"dependencies: {libraries}")
     return result
 
@@ -317,6 +323,7 @@ def rebind_macos_classes(data: bytearray) -> dict[str, int]:
             f"Targeted macOS-only imports not found in {mode}: {absent}; "
             "verify the original guest format and exact symbol bindings")
     for symbol, count in modified.items():
-        print(f"[patch] {mode}: {symbol}: redirected {count} Foundation "
-              "bind(s) to FactorioCompat")
+        original, target = REBINDS[symbol]
+        print(f"[patch] {mode}: {symbol}: redirected {count} {original} "
+              f"bind(s) to {target}")
     return modified
