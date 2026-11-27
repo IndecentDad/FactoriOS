@@ -64,20 +64,42 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
     ncmds, sizeofcmds = struct.unpack_from("<II", raw, 16)
     pos, end = 32, 32 + sizeofcmds
     reexports = []
+    ordinary_loads = []
     for _ in range(ncmds):
         if pos + 8 > min(len(raw), end):
             raise RuntimeError("Malformed FactorioCompat load command")
         cmd, length = struct.unpack_from("<II", raw, pos)
         if length < 8 or pos + length > min(len(raw), end):
             raise RuntimeError("Malformed FactorioCompat load command length")
-        if cmd == 0x8000001F:  # LC_REEXPORT_DYLIB
+        if cmd in (0x8000001F, 0x0C, 0x80000018):  # reexport, load, weak-load
             offset = struct.unpack_from("<I", raw, pos + 8)[0]
             if not 24 <= offset < length:
-                raise RuntimeError("Malformed IOKit reexport path")
-            reexports.append(raw[pos+offset:pos+length].split(b"\0", 1)[0].decode("utf-8"))
+                raise RuntimeError(f"Malformed framework path in load command 0x{cmd:x}")
+            framework_path = raw[pos+offset:pos+length].split(b"\0", 1)[0].decode("utf-8")
+            if cmd == 0x8000001F:
+                reexports.append(framework_path)
+            else:
+                ordinary_loads.append(framework_path)
         pos += length
-    if pos != end or not any(path.endswith("/IOKit.framework/IOKit") for path in reexports):
-        raise RuntimeError(f"Native IOKit LC_REEXPORT_DYLIB missing: {reexports}")
+    if pos != end:
+        raise RuntimeError("Malformed FactorioCompat load commands end")
+    # iOS stubs and ld64.lld may use the unversioned install name; macOS
+    # stubs can use /Versions/A/. Both refer to IOKit. Crucially, only a
+    # *reexport* command can satisfy imports bound to FactorioCompat via dyld.
+    def is_iokit_framework(path: str) -> bool:
+        parts = path.replace("\\", "/").split("/")
+        if len(parts) < 2 or parts[-1] != "IOKit":
+            return False
+        if parts[-2] == "IOKit.framework":
+            return True
+        return (len(parts) >= 4 and parts[-4] == "IOKit.framework"
+                and parts[-3] == "Versions" and bool(parts[-2]))
+
+    if not any(is_iokit_framework(path) for path in reexports):
+        raise RuntimeError(
+            "Native IOKit LC_REEXPORT_DYLIB missing. "
+            f"Reexports: {reexports}; ordinary/weak loads: {ordinary_loads}. "
+            "An LC_LOAD_DYLIB alone cannot resolve guest symbols via FactorioCompat.")
 
     print("validated FactorioCompat exports: NSColor, legacy UTType globals")
     print("validated native IOKit reexport: " + ", ".join(reexports))
