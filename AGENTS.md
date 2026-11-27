@@ -42,30 +42,18 @@ not a final answer. An unsuccessful hypothesis is evidence to revise and retry.
 - Fix tooling errors (paths, shell quoting, imports, logging, metadata validation)
   yourself, just as you fix actual compatibility code.
 
-## Active work: preserve production iPad UI alongside Duo experiment
+## Current baseline: FactoriOS v1.0 universal candidate
 
-The original Xcode Swift app and the Xcode project remain present and
-unchanged in the experiment; do not port, replace or rewrite their iPad
-interface. The Windows SDK 27.2 builder compiles .c/.m/.mm only and selects
-FactorioUIKitApp.m rather than the original Swift app. It cannot be considered
-a full iPad feature replacement even when built with UIDeviceFamily [1,2].
-Use the original main/Xcode path for production iPad functionality until
-explicitly requested otherwise. Preserve external-display and advanced
-touch/controller features in the original Swift source. Do NOT merge the
-experimental Windows Objective-C app shell to main.
+- Host-validated private candidate: `F:\FactoriOS\dist\private-duo-ios27-universal-external-pointer-c3b1018\FactorioPad.ipa`; SHA-256 `b1a05f4a40576dfe714109cc9d77fcd5182b03014fc8c5f8f7292e49096b7b61`.
+- Candidate source revision: `c3b101845e2e3732b1e7458303eca187fe502dd6`.
+- The user confirms the earlier Factorio 2.1.24 build works fully on iPhone Duo. Preserve that device-confirmed fallback at `F:\FactoriOS\dist\private-duo-ios27-routing-20261127-010338-b79857c\FactorioPad.ipa`, SHA-256 `b656cefa5ef5e52d5bbc2d7509c1d977ddb7a01d04ba0a57dc34b2e08667a8bf`.
+- The v1.0 candidate is host-validated; its new external-pointer behavior still needs iPad/external-monitor testing and a Duo retest before replacing the fallback. Do not describe host checks as device success.
+- FactorioGuest and FactorioCompat hashes are unchanged from the Duo fallback. FactorioData and saves remain separate and untouched.
+- Universal metadata is `UIDeviceFamily [1,2]` and `UIRequiresFullScreen false`. The original Swift/Xcode app and iPad UI stay intact and excluded from the Windows-only Objective-C build shell. The UIKit shell is not full Swift UI parity; do not rewrite the Swift UI or merge the Windows app shell to main.
+- Windows pointer routing retains relative mouse input on iPhone/captured scenes and uses absolute pointer, click and scroll events when iPad pointer lock is released. The app uses active scene geometry but does not create/manage a dedicated external-display gameplay scene.
+- Old superseded template/private IPA binaries were cleaned from `dist`; the v1.0 candidate, Duo fallback, audit reports/logs, FactorioData and saves were preserved. See `docs/NEXT_CODEX_HANDOFF.md` for the retained artifact list and physical test checklist.
 
-The Windows template generator must explicitly emit UIDeviceFamily [1,2]
-matching TARGETED_DEVICE_FAMILY = "1,2" in the unchanged Xcode project.
-Treat missing universal device-family metadata as a packaging regression,
-not justification to rewrite iPad UI. Validate it in the game-free IPA tests
-before any private build. The user's latest Duo runtime baseline remains
-untouched and does not require a rebuild merely to document this distinction.
-
-## Active work: Duo launch baseline and UI cleanup
-
-The Factorio 2.1.24 private build documented in `docs/NEXT_CODEX_HANDOFF.md` has launched successfully on the physical iPhone Duo. Treat it as the known-good runtime baseline. Continue with focused UI cleanup on `experiment/windows-native-ios27` while preserving the working IPA and all user data.
-
-Autonomous development is required. When a routine command, compile, test, packaging step, or audit fails, inspect its current-run log and relevant source, fix the root cause, and rerun. Do not stop after diagnosing an ordinary error or ask the user to relay fixes between sessions. Stop only at a genuine external dependency such as physical hardware access or credentials. Keep commits on the experiment branch and do not modify `main`, stable releases, FactorioData, or saves.
+Autonomous development is required. For routine test, compile, link, package or audit failures, inspect the current evidence, fix the cause, and rerun. Continue without asking the user to relay ordinary fixes. Keep changes on `experiment/windows-native-ios27`; do not modify main, stable releases, FactorioData or saves.
 
 ## Reporting and stopping rules
 
