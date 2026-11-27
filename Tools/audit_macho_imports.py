@@ -160,7 +160,10 @@ def provider_matches_binding(provider: str, raw_line: str) -> bool:
         # or /usr/lib/system/ libraries depending on SDK/linker versions.
         return ("libSystem" in dyld_provider or
                 re.search(r"/usr/lib/system/lib[^/]+\.dylib$", dyld_provider) is not None)
-    return provider in dyld_provider
+    # Exact normalized provider identity, not a substring: Foundation and
+    # CoreFoundation must never be conflated in the guest validation.
+    resolved, _symbol = native_provider_from_line(raw_line)
+    return resolved == provider
 
 
 def try_provider_link(symbols: list[str], provider: str, sdk: pathlib.Path,
