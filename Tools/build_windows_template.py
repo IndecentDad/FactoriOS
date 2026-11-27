@@ -55,6 +55,7 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
         "_kUTTypeUTF8PlainText",
         "_OBJC_CLASS_$_NSColor",
         "_OBJC_CLASS_$_NSAppleEventManager",
+        "_kCGDisplayShowDuplicateLowResolutionModes",
     }
     missing = sorted(required - public)
     if missing:
