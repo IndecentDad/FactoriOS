@@ -150,12 +150,14 @@
     return;
   CGPoint delta = [g translationInView:self];
   [g setTranslation:CGPointZero inView:self];
-  self.scrollRemainder.x += delta.x / 20.0;
-  self.scrollRemainder.y -= delta.y / 20.0;
-  int sx = (int)trunc(self.scrollRemainder.x);
-  int sy = (int)trunc(self.scrollRemainder.y);
-  self.scrollRemainder.x -= sx;
-  self.scrollRemainder.y -= sy;
+  CGPoint remainder = self.scrollRemainder;
+  remainder.x += delta.x / 20.0;
+  remainder.y -= delta.y / 20.0;
+  int sx = (int)trunc(remainder.x);
+  int sy = (int)trunc(remainder.y);
+  remainder.x -= sx;
+  remainder.y -= sy;
+  self.scrollRemainder = remainder;
   if (sx || sy)
     FactorioMouseWheel(sx, sy);
 }
