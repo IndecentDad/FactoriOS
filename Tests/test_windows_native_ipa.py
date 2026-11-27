@@ -15,7 +15,7 @@ def main():
         assert info.get("CFBundleIdentifier")=="pl.adrian.FactorioPad"
         assert info.get("CFBundleExecutable")=="FactorioPad"
         assert info.get("FactorioPadExternalDataVersion")==1
-        assert info.get("UISupportedInterfaceOrientations")==["UIInterfaceOrientationLandscapeLeft","UIInterfaceOrientationLandscapeRight"]
+        assert info.get("UISupportedInterfaceOrientations")==["UIInterfaceOrientationPortrait","UIInterfaceOrientationLandscapeLeft","UIInterfaceOrientationLandscapeRight"]
         assert prefix+"FactoriOS-icon.png" in names
         assert json_marker(z.read(prefix+MARKER))
         assert not any("FactorioGuest.framework" in n or "/FactorioData/" in n for n in names)
