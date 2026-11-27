@@ -226,34 +226,42 @@ def verify_output(ipa_path: Path) -> tuple[str, str]:
                 capture_output=True, text=True, errors="replace", check=True).stdout
             if "Foundation.framework/Foundation" not in dependency_report:
                 raise RuntimeError("Guest lacks native Foundation dependency; stale patcher?")
-            # Device log 2026-11-27: the original guest tried to resolve
-            # _OBJC_CLASS_$_NSAppleEventManager from iOS Foundation.
-            # This macOS-only class is already implemented by FactorioCompat.
-            # Reject packages that preserve the wrong two-level dylib ordinal.
-            class_symbol = "_OBJC_CLASS_$_NSAppleEventManager"
-            bind_lines = []
+            # Device logs show two macOS-only symbols were incorrectly
+            # bound to iOS native frameworks even though the compatibility
+            # framework already exports both. Check BOTH the dyld provider
+            # and the packaged compatibility export before accepting an IPA.
+            required_compat_routings = {
+                "_OBJC_CLASS_$_NSAppleEventManager": "Foundation",
+                "_kCGDisplayShowDuplicateLowResolutionModes": "CoreGraphics",
+            }
+            dyld_binds: dict[str, list[str]] = {
+                symbol: [] for symbol in required_compat_routings
+            }
             for bind_flag in ("--bind", "--lazy-bind"):
                 binding_report = subprocess.run(
                     [str(objdump), "--macho", bind_flag, str(guest_bin)],
                     capture_output=True, text=True, errors="replace",
                     check=True).stdout
-                bind_lines.extend(
-                    line.strip() for line in binding_report.splitlines()
-                    if line.strip().split()[-1:] == [class_symbol]
-                )
-            if not bind_lines or not all("FactorioCompat" in line for line in bind_lines):
-                raise RuntimeError(
-                    "NSAppleEventManager guest bindings do not exclusively target "
-                    f"FactorioCompat (instead of system Foundation): {bind_lines}")
+                for line in binding_report.splitlines():
+                    cols = line.strip().split()
+                    if cols and cols[-1] in dyld_binds:
+                        dyld_binds[cols[-1]].append(line.strip())
+            for symbol, old_provider in required_compat_routings.items():
+                rows = dyld_binds[symbol]
+                if not rows or not all("FactorioCompat" in row for row in rows):
+                    raise RuntimeError(
+                        f"{symbol} is still bound to native {old_provider} "
+                        f"rather than FactorioCompat: {rows}")
             export_report = subprocess.run(
                 [str(nm), "--extern-only", "--defined-only", str(compat_bin)],
                 capture_output=True, text=True, errors="replace", check=True).stdout
             exports = {line.split()[-1] for line in export_report.splitlines() if line.split()}
-            if "_kUTTagClassMIMEType" not in exports:
-                raise RuntimeError("Packaged FactorioCompat does not export _kUTTagClassMIMEType")
-            if class_symbol not in exports:
-                raise RuntimeError("Packaged FactorioCompat does not export NSAppleEventManager runtime class")
-            print("NSAppleEventManager dyld ordinal confirmed: FactorioCompat")
+            required_exports = set(required_compat_routings) | {"_kUTTagClassMIMEType"}
+            missing_exports = sorted(required_exports - exports)
+            if missing_exports:
+                raise RuntimeError(
+                    f"Packaged FactorioCompat missing mandatory exports: {missing_exports}")
+            print("macOS-only NSAppleEventManager and CGDisplay constant binds: FactorioCompat")
             print("Native framework routing confirmed: Foundation -> Foundation.framework")
             print("Known missing compatibility symbol exported: _kUTTagClassMIMEType")
         return guest_sha, compat_sha
