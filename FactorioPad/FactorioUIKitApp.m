@@ -467,7 +467,7 @@
   // The user can still reveal touch controls via the keyboard's hold menu.
   if ([n.name isEqualToString:GCControllerDidConnectNotification] ||
       [n.name isEqualToString:GCControllerDidDisconnectNotification]) {
-    self.touchPad.enabled = GCController.controllers.count == 0;
+    self.touchPad.enabled = [GCController controllers].count == 0;
   }
 }
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations {
@@ -486,7 +486,7 @@
   [self.view addSubview:v];
   self.touchPad = [FactorioTouchUIKit new];
   self.touchPad.translatesAutoresizingMaskIntoConstraints = NO;
-  self.touchPad.enabled = GCController.controllers.count == 0;
+  self.touchPad.enabled = [GCController controllers].count == 0;
   __weak typeof(self) weakSelf = self;
   self.touchPad.onExit = ^{
     [weakSelf.navigationController popViewControllerAnimated:YES];
@@ -571,7 +571,7 @@
   CAMetalLayer *metal = (CAMetalLayer *)self.gameView.layer;
   [FactorioLoader logMessage:[NSString stringWithFormat:
       @"Duo geometry scene=%@ window=%@ safe=%@ game=%@ touch=%@ "
-       "drawable=%@ orientation=%ld duoPortrait=%d",
+       @"drawable=%@ orientation=%ld duoPortrait=%d",
       NSStringFromCGRect(scene.coordinateSpace.bounds),
       NSStringFromCGRect(self.view.window.bounds),
       NSStringFromUIEdgeInsets(safe), NSStringFromCGRect(self.gameView.frame),
