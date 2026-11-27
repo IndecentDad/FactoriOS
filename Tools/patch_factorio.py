@@ -29,12 +29,6 @@ GUEST_ID = "@rpath/FactorioGuest.framework/FactorioGuest"
 COMPAT_PATH = "@rpath/FactorioCompat.framework/FactorioCompat"
 
 
-# Keep public iOS frameworks as native dependencies. Rewriting all of them to
-# FactorioCompat preserves the original bind ordinal but makes dyld look for
-# their system API exports in our compatibility dylib instead.
-# Frameworks here are macOS-only or require compatibility replacements.
-# This is a routing baseline, not proof that every native import exists on iOS;
-# the final guest must still pass import/export validation.
 SHIM_FRAMEWORKS = {
     "AppKit",
     "Cocoa",
@@ -44,15 +38,13 @@ SHIM_FRAMEWORKS = {
     "OpenCL",
     "LDAP",
     "ApplicationServices",
-    "CoreServices",
-    "IOKit",
-}
 
-NATIVE_IOS_FRAMEWORKS = {
     "Foundation",
     "CoreGraphics",
     "CoreVideo",
     "Metal",
+    "CoreServices",
+    "IOKit",
     "Security",
     "CoreAudio",
     "AudioToolbox",
@@ -587,12 +579,6 @@ def patch(path):
         "[+] added LC_ID_DYLIB:",
         GUEST_ID
     )
-
-    # Redirect the macOS-only NSAppleEventManager class at its individual
-    # dyld binding, NOT the whole Foundation framework. Native Foundation
-    # symbols continue to resolve from iOS Foundation.
-    from rebind_guest_symbols import rebind_macos_classes
-    rebind_macos_classes(data)
 
     path.write_bytes(data)
 
