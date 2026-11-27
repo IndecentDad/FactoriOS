@@ -42,12 +42,13 @@ def libs() -> list[bytes]:
 
 
 def chained_fixture(fmt: int = 1, wrong_provider: bool = False,
-                    missing_target: bool = False) -> bytearray:
+                    missing_target: bool = False,
+                    corefoundation_first: bool = False) -> bytearray:
     name = (b"_OBJC_CLASS_$_OtherClass" if missing_target else SYMBOL) + b"\0"
     stride = {1: 4, 2: 8, 3: 16}[fmt]
     blob = bytearray(28 + stride + len(name))
     struct.pack_into("<7I", blob, 0, 0, 0, 28, 28 + stride, 1, fmt, 0)
-    provider = 3 if wrong_provider else 1
+    provider = 3 if wrong_provider else (2 if corefoundation_first else 1)
     if fmt == 3:
         struct.pack_into("<Qq", blob, 28, provider, -123)
     else:
@@ -56,6 +57,9 @@ def chained_fixture(fmt: int = 1, wrong_provider: bool = False,
             struct.pack_into("<i", blob, 32, -123)
     blob[28+stride:] = name
     commands = libs()
+    if corefoundation_first:
+        commands.insert(0, dylib(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"))
     cmd_start = 32 + sum(map(len, commands)) + 16
     commands.append(struct.pack("<4I", 0x80000034, 16, cmd_start, len(blob)))
     return header(commands) + blob
@@ -93,6 +97,15 @@ class RebindTests(unittest.TestCase):
         entry = payload_offset + 28
         self.assertEqual(data[entry], 2)
         self.assertEqual(data[entry+1:], before[entry+1:])
+
+    def test_corefoundation_does_not_alias_foundation(self):
+        data = chained_fixture(corefoundation_first=True)
+        original = data[:]
+        rebind_macos_classes(data)
+        changes = [(i, old, new) for i, (old, new)
+                   in enumerate(zip(original, data)) if old != new]
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0][1:], (2, 3))
 
     def test_chained_addend_import(self):
         data = chained_fixture(2)
