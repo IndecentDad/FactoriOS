@@ -10,6 +10,7 @@
 #import <AVFAudio/AVFAudio.h>
 #import <GameController/GameController.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/CAGradientLayer.h>
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
@@ -497,7 +498,7 @@
                                         width - heroWidth - gap, h);
     self.scroller.contentSize = CGSizeMake(CGRectGetWidth(usable), h + 2 * margin);
   } else {
-    CGFloat heroHeight = 430, settingsHeight = 485;
+    CGFloat heroHeight = 510, settingsHeight = 520;
     self.heroCard.frame = CGRectMake(margin, margin, width, heroHeight);
     self.settingsCard.frame = CGRectMake(margin, margin + heroHeight + gap,
                                         width, settingsHeight);
