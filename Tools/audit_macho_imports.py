@@ -103,7 +103,50 @@ PROVIDER_LINK_FLAGS = {
     "IOKit": ["-framework", "IOKit"],
     "MobileCoreServices": ["-framework", "MobileCoreServices"],
     "libSystem": ["-lSystem"],
+    # Frameworks that FactorioGuest binds directly to. Their original
+    # macOS exports are not guaranteed to exist in the iPhoneOS SDK.
+    "Foundation": ["-framework", "Foundation"],
+    "CoreFoundation": ["-framework", "CoreFoundation"],
+    "CoreGraphics": ["-framework", "CoreGraphics"],
+    "CoreVideo": ["-framework", "CoreVideo"],
+    "CoreAudio": ["-framework", "CoreAudio"],
+    "AudioToolbox": ["-framework", "AudioToolbox"],
+    "Metal": ["-framework", "Metal"],
+    "Security": ["-framework", "Security"],
+    "UIKit": ["-framework", "UIKit"],
+    "QuartzCore": ["-framework", "QuartzCore"],
+    "AVFAudio": ["-framework", "AVFAudio"],
+    "GameController": ["-framework", "GameController"],
+    "libobjc": ["-lobjc"],
+    "libc++": ["-lc++"],
+    "libz": ["-lz"],
+    "libsqlite3": ["-lsqlite3"],
+    "libcompression": ["-lcompression"],
+    "libiconv": ["-liconv"],
+    "libxml2": ["-lxml2"],
 }
+
+
+def native_provider_from_line(line: str) -> tuple[str | None, str | None]:
+    """Return (normalized SDK provider, symbol) for a native guest import."""
+    cols = line.strip().split()
+    if len(cols) < 3 or not re.fullmatch(r"_[A-Za-z0-9_.$?+\\-]+", cols[-1]):
+        return None, None
+    raw_provider = cols[-2]
+    if "FactorioCompat" in raw_provider:
+        return None, None
+    # Match complete provider basenames; CoreFoundation must not be mistaken
+    # for Foundation. llvm-objdump may show names or full install paths.
+    name = raw_provider.split("/")[-1]
+    if name.endswith(".dylib"):
+        name = re.sub(r"(?:\\.[AB])?\\.dylib$", "", name)
+    if name in PROVIDER_LINK_FLAGS:
+        return name, cols[-1]
+    # Known framework install-name aliases (including macOS versioned paths).
+    frame = re.search(r"/([^/]+)\\.framework/(?:Versions/[^/]+/)?[^/]+$", raw_provider)
+    if frame and frame.group(1) in PROVIDER_LINK_FLAGS:
+        return frame.group(1), cols[-1]
+    return raw_provider, cols[-1]
 
 
 def provider_matches_binding(provider: str, raw_line: str) -> bool:
@@ -289,10 +332,12 @@ def main() -> int:
         (args.report_dir / "guest-dylibs.txt").write_text(used_text, encoding="utf-8")
 
         collected: dict[str, set[str]] = {}
+        bind_outputs: dict[str, str] = {}
         for name, flag in (("strong", "--bind"), ("lazy", "--lazy-bind"),
                            ("weak", "--weak-bind")):
             output = run_tool(args.llvm_bin, "llvm-objdump", "--macho",
                               flag, str(extracted["guest"]))
+            bind_outputs[name] = output
             (args.report_dir / f"guest-{name}-binds.txt").write_text(output, encoding="utf-8")
             collected[name] = bindings_for_compat(output)
 
@@ -357,6 +402,60 @@ def main() -> int:
         (args.report_dir / "reexport-resolution.json").write_text(
             json.dumps(evidence, indent=2), encoding="utf-8")
 
+        # A passing FactorioCompat-only audit previously missed
+        # _OBJC_CLASS_$_NSAppleEventManager bound to native Foundation.
+        # Verify that macOS-only guest class resolves from the actual shim,
+        # not a system framework that does not provide it on iOS.
+        known_class = "_OBJC_CLASS_$_NSAppleEventManager"
+        known_rows = [
+            line.strip()
+            for name in ("strong", "lazy")
+            for line in bind_outputs[name].splitlines()
+            if line.strip().split()[-1:] == [known_class]
+        ]
+        bad_known_class = not known_rows or any("FactorioCompat" not in row for row in known_rows)
+        if bad_known_class:
+            print("ERROR: NSAppleEventManager still bound to native Foundation, "
+                  f"or not found in strong binds: {known_rows}")
+
+        # Audit all other strong/lazy bindings against their native providers,
+        # not just the imports routed through FactorioCompat.
+        native_groups: dict[str, set[str]] = {}
+        native_binding_rows: dict[str, list[str]] = {}
+        for name in ("strong", "lazy"):
+            for line in bind_outputs[name].splitlines():
+                provider, symbol = native_provider_from_line(line)
+                if provider is None or symbol is None:
+                    continue
+                native_groups.setdefault(provider, set()).add(symbol)
+                native_binding_rows.setdefault(provider, []).append(line.strip())
+        native_verified: dict[str, dict[str, str]] = {}
+        native_unverified: dict[str, dict[str, str]] = {}
+        for provider, symbols in sorted(native_groups.items()):
+            if provider not in PROVIDER_LINK_FLAGS:
+                native_unverified[provider] = {
+                    symbol: "Unknown SDK native binding provider. "
+                            "Inspect original Mach-O library ordinal."
+                    for symbol in sorted(symbols)}
+                continue
+            success, rejected = probe_provider_symbols(
+                sorted(symbols), provider, args.sdk, args.llvm_bin,
+                tempdir, args.report_dir)
+            native_verified[provider] = success
+            native_unverified[provider] = rejected
+        (args.report_dir / "native-provider-resolution.json").write_text(
+            json.dumps({
+                "guest_native_imports_by_provider": {
+                    k: sorted(v) for k, v in native_groups.items()},
+                "native_sdk_verified": native_verified,
+                "unverified_native_imports": native_unverified,
+                "native_binding_rows": native_binding_rows,
+                "nsappleeventmanager_bind_rows": known_rows,
+                "nsappleeventmanager_wrong_native_provider": bad_known_class,
+                "note": "Positive SDK link probes do not prove on-device dyld behavior.",
+            }, indent=2), encoding="utf-8")
+        total_native_missing = sum(len(v) for v in native_unverified.values())
+
         print(f"Private IPA: {args.ipa}")
         print(f"FactorioCompat directly defined exports: {len(exports)}")
         print(f"FactorioCompat strong/lazy guest bindings: {len(required)}")
@@ -365,6 +464,8 @@ def main() -> int:
         for provider, verified in verified_by_provider.items():
             print(f"Verified via {provider} LC_REEXPORT_DYLIB and iOS-arm64 SDK link: {len(verified)}")
         print(f"REMAINING UNVERIFIED strong/lazy FactorioCompat bindings: {len(genuine_remaining)}")
+        print(f"Native strong/lazy bindings tested: {sum(map(len, native_groups.values()))}")
+        print(f"Native strong/lazy provider imports unverified: {total_native_missing}")
         for symbol in genuine_remaining[:60]:
             print(f"  UNRESOLVED {symbol}")
         if not required:
@@ -373,7 +474,14 @@ def main() -> int:
             return 2
         print("NOTE: Other system-framework bindings and actual device runtime remain outside this audit's scope.")
         print(f"Reports: {args.report_dir}")
-        return 1 if genuine_remaining else 0
+        if bad_known_class:
+            print("The previously observed device missing-class failure is still present.")
+        for provider, symbols in sorted(native_unverified.items()):
+            if symbols:
+                print(f"  NATIVE UNVERIFIED {provider}: {len(symbols)} symbols")
+                for symbol in list(symbols)[:12]:
+                    print(f"    {symbol}")
+        return 1 if genuine_remaining or total_native_missing or bad_known_class else 0
 
 
 if __name__ == "__main__":
