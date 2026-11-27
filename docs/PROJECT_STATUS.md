@@ -1,5 +1,29 @@
 # FactoriOS Project Status
 
+## Latest — restored original upstream framework routing
+
+- The prior Windows SDK 27.2 build pipeline was NOT semantically equivalent
+  to the Xcode-built app. It changed Tools/patch_factorio.py to route original
+  macOS Foundation/CoreGraphics/CoreVideo/Metal/Security/CoreAudio/AudioToolbox
+  imports directly to native iOS frameworks, bypassing FactorioCompat.
+- Upstream MyNameIsArko/FactorioPad and this fork's main have the exact same
+  canonical Mach-O patcher (Git blob 58bfe0afd0aaebdce60aac83a4c9b65ad12d710e).
+  The Windows experiment now restores that exact file.
+- Original FactorioCompat.xcconfig already specifies reexports of all relevant
+  native providers. Windows now derives LC_REEXPORT_DYLIB requirements from
+  that canonical SHIM_FRAMEWORKS set and retains the MobileCoreServices fallback.
+- Obsolete one-symbol Mach-O import rebinding has been deleted; a new
+  game-free test verifies canonical routing and Xcode configuration parity.
+- Tools/build_private_duo.py now rejects native Foundation/CoreGraphics/etc
+  guest routing; the expanded Mach-O audit tests the full reexport set.
+- **Next:** Codex on Windows must run the new routing regression test, inspect
+  existing afccbc9 failed audit evidence, build a *fresh* SDK 27.2 template
+  and original-DMG-patched 2.1.24 guest, resolve all real host audit failures,
+  then provide a new IPA for physical Duo launch testing.
+- **No new IPA has been created or tested by these source commits.**
+  Source changes do not establish on-device launch or screen geometry.
+
+
 ## Windows-native experiment
 
 - Worktree: `F:\FactoriOS`, branch `experiment/windows-native-ios27`, based on requested commit `a805cc79dbbe40c717c575e9d5577f36e1dd76e2`. Production `main` and `FactoriOS-latest` were not changed.
