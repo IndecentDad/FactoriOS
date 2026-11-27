@@ -283,162 +283,346 @@
 
 @interface FactorioHomeController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic) BOOL selectingSaveFolder;
+@property(nonatomic, strong) UIScrollView *scroller;
+@property(nonatomic, strong) UIView *heroCard;
+@property(nonatomic, strong) UIView *settingsCard;
+@property(nonatomic, strong) CAGradientLayer *heroGradient;
+@property(nonatomic, strong) UILabel *dataStatus;
+@property(nonatomic, strong) UILabel *syncStatus;
+@property(nonatomic, strong) UIButton *playButton;
+@property(nonatomic, strong) UIButton *importButton;
+@property(nonatomic, strong) UISegmentedControl *graphicsControl;
+@property(nonatomic, strong) UISegmentedControl *controllerControl;
 @end
+
 @implementation FactorioHomeController
+
+- (UILabel *)label:(NSString *)text size:(CGFloat)size weight:(UIFontWeight)weight {
+  UILabel *label = [UILabel new];
+  label.text = text;
+  label.font = [UIFont systemFontOfSize:size weight:weight];
+  label.textColor = UIColor.whiteColor;
+  label.numberOfLines = 0;
+  return label;
+}
+
+- (UIButton *)button:(NSString *)title action:(SEL)selector primary:(BOOL)primary {
+  UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+  [button setTitle:title forState:UIControlStateNormal];
+  button.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+  button.backgroundColor = primary
+      ? [UIColor colorWithRed:.97 green:.48 blue:.28 alpha:1]
+      : [UIColor colorWithWhite:.19 alpha:1];
+  [button setTitleColor:primary ? UIColor.blackColor : UIColor.whiteColor
+              forState:UIControlStateNormal];
+  button.layer.cornerRadius = 14;
+  button.contentEdgeInsets = UIEdgeInsetsMake(14, 12, 14, 12);
+  [button.heightAnchor constraintGreaterThanOrEqualToConstant:47].active = YES;
+  [button addTarget:self action:selector forControlEvents:UIControlEventTouchUpInside];
+  return button;
+}
+
+- (UIStackView *)cardStack:(UIView *)card {
+  UIStackView *stack = [UIStackView new];
+  stack.axis = UILayoutConstraintAxisVertical;
+  stack.spacing = 11;
+  stack.alignment = UIStackViewAlignmentFill;
+  stack.distribution = UIStackViewDistributionFill;
+  stack.translatesAutoresizingMaskIntoConstraints = NO;
+  [card addSubview:stack];
+  [NSLayoutConstraint activateConstraints:@[
+    [stack.topAnchor constraintEqualToAnchor:card.topAnchor constant:22],
+    [stack.leadingAnchor constraintEqualToAnchor:card.leadingAnchor constant:22],
+    [stack.trailingAnchor constraintEqualToAnchor:card.trailingAnchor constant:-22],
+    [stack.bottomAnchor constraintLessThanOrEqualToAnchor:card.bottomAnchor constant:-20]
+  ]];
+  return stack;
+}
+
+- (UIView *)card {
+  UIView *view = [UIView new];
+  view.backgroundColor = [UIColor colorWithRed:.13 green:.14 blue:.17 alpha:1];
+  view.layer.cornerRadius = 23;
+  view.clipsToBounds = YES;
+  view.layer.borderColor = [UIColor colorWithWhite:.42 alpha:.30].CGColor;
+  view.layer.borderWidth = 1;
+  return view;
+}
+
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.title = @"FactoriOS";
-  self.view.backgroundColor = UIColor.systemBackgroundColor;
-  UIStackView *s = [UIStackView new];
-  s.axis = UILayoutConstraintAxisVertical;
-  s.spacing = 14;
-  s.translatesAutoresizingMaskIntoConstraints = NO;
-  UILabel *t = [UILabel new];
-  t.text = @"FactoriOS";
-  t.font = [UIFont preferredFontForTextStyle:UIFontTextStyleLargeTitle];
-  t.textAlignment = NSTextAlignmentCenter;
-  UILabel *d = [UILabel new];
-  d.text = @"Import your FactorioData folder, then launch the game.";
-  d.numberOfLines = 0;
-  d.textAlignment = NSTextAlignmentCenter;
-  [s addArrangedSubview:t];
-  [s addArrangedSubview:d];
-  [s addArrangedSubview:[self button:@"Import FactorioData"
-                              action:@selector(importData)]];
-  [s addArrangedSubview:[self button:@"Choose Factorio save folder"
-                              action:@selector(chooseSaveFolder)]];
-  [s addArrangedSubview:[self button:@"Play" action:@selector(play)]];
-  [s addArrangedSubview:[self button:@"Graphics: Cycle Preset"
-                              action:@selector(cycleGraphics)]];
-  [s addArrangedSubview:[self button:@"Controller: Toggle Native Mode"
-                              action:@selector(toggleController)]];
-  [s addArrangedSubview:[self button:@"Share Startup Log"
-                              action:@selector(shareLog)]];
-  [self.view addSubview:s];
-  UILayoutGuide *g = self.view.safeAreaLayoutGuide;
-  [NSLayoutConstraint activateConstraints:@[
-    [s.centerXAnchor constraintEqualToAnchor:g.centerXAnchor],
-    [s.centerYAnchor constraintEqualToAnchor:g.centerYAnchor],
-    [s.widthAnchor constraintLessThanOrEqualToAnchor:g.widthAnchor
-                                            constant:-40],
-    [s.widthAnchor constraintEqualToConstant:380]
-  ]];
+  self.view.backgroundColor = [UIColor colorWithRed:.055 green:.061 blue:.073 alpha:1];
+  self.scroller = [UIScrollView new];
+  self.scroller.alwaysBounceVertical = YES;
+  self.scroller.backgroundColor = UIColor.clearColor;
+  [self.view addSubview:self.scroller];
+
+  self.heroCard = [self card];
+  self.heroGradient = [CAGradientLayer layer];
+  self.heroGradient.colors = @[
+    (id)[UIColor colorWithRed:.27 green:.20 blue:.17 alpha:1].CGColor,
+    (id)[UIColor colorWithRed:.12 green:.13 blue:.18 alpha:1].CGColor,
+    (id)[UIColor colorWithRed:.08 green:.09 blue:.11 alpha:1].CGColor
+  ];
+  self.heroGradient.startPoint = CGPointMake(0, 0);
+  self.heroGradient.endPoint = CGPointMake(1, 1);
+  [self.heroCard.layer insertSublayer:self.heroGradient atIndex:0];
+  [self.scroller addSubview:self.heroCard];
+  UIStackView *hero = [self cardStack:self.heroCard];
+
+  UIImage *brand = [UIImage imageWithContentsOfFile:
+      [NSBundle.mainBundle pathForResource:@"FactoriOS-icon" ofType:@"png"]];
+  UIImageView *artwork = [[UIImageView alloc] initWithImage:brand];
+  artwork.contentMode = UIViewContentModeScaleAspectFit;
+  artwork.clipsToBounds = YES;
+  [artwork.heightAnchor constraintEqualToConstant:138].active = YES;
+  [hero addArrangedSubview:artwork];
+
+  UILabel *title = [self label:@"FACTORIO" size:35 weight:UIFontWeightHeavy];
+  [hero addArrangedSubview:title];
+  UILabel *subtitle = [self label:@"Desktop game · native ARM64 compatibility"
+                             size:14 weight:UIFontWeightRegular];
+  subtitle.textColor = [UIColor colorWithWhite:.80 alpha:1];
+  [hero addArrangedSubview:subtitle];
+
+  self.dataStatus = [self label:@"" size:14 weight:UIFontWeightMedium];
+  [hero addArrangedSubview:self.dataStatus];
+
+  self.playButton = [self button:@"▶  Play" action:@selector(play) primary:YES];
+  [hero addArrangedSubview:self.playButton];
+
+  self.importButton = [self button:@"Import FactorioData"
+                             action:@selector(importData) primary:NO];
+  [hero addArrangedSubview:self.importButton];
+
+  UILabel *footnote = [self label:@"Your game files and saves remain on this device."
+                             size:12 weight:UIFontWeightRegular];
+  footnote.textColor = [UIColor colorWithWhite:.67 alpha:1];
+  [hero addArrangedSubview:footnote];
+
+  self.settingsCard = [self card];
+  [self.scroller addSubview:self.settingsCard];
+  UIStackView *settings = [self cardStack:self.settingsCard];
+  [settings addArrangedSubview:[self label:@"Settings" size:25 weight:UIFontWeightBold]];
+  UILabel *description = [self label:@"Adjust your preferences before playing."
+                                  size:13 weight:UIFontWeightRegular];
+  description.textColor = [UIColor colorWithWhite:.75 alpha:1];
+  [settings addArrangedSubview:description];
+
+  UILabel *graphicsLabel = [self label:@"Graphics preset" size:15
+                                     weight:UIFontWeightSemibold];
+  [settings addArrangedSubview:graphicsLabel];
+  self.graphicsControl = [[UISegmentedControl alloc]
+      initWithItems:@[@"Low", @"Balanced", @"Quality"]];
+  self.graphicsControl.selectedSegmentTintColor =
+      [UIColor colorWithRed:.94 green:.58 blue:.36 alpha:1];
+  [self.graphicsControl addTarget:self action:@selector(changeGraphics:)
+                  forControlEvents:UIControlEventValueChanged];
+  [self.graphicsControl.heightAnchor constraintEqualToConstant:40].active = YES;
+  [settings addArrangedSubview:self.graphicsControl];
+
+  UILabel *controllerLabel = [self label:@"Controller input" size:15
+                                       weight:UIFontWeightSemibold];
+  [settings addArrangedSubview:controllerLabel];
+  self.controllerControl = [[UISegmentedControl alloc]
+      initWithItems:@[@"Native", @"Keyboard / Mouse"]];
+  self.controllerControl.selectedSegmentTintColor =
+      [UIColor colorWithRed:.94 green:.58 blue:.36 alpha:1];
+  [self.controllerControl addTarget:self action:@selector(changeController:)
+                    forControlEvents:UIControlEventValueChanged];
+  [self.controllerControl.heightAnchor constraintEqualToConstant:40].active = YES;
+  [settings addArrangedSubview:self.controllerControl];
+
+  [settings addArrangedSubview:[self button:@"Choose Save Sync Folder"
+                                      action:@selector(chooseSaveFolder) primary:NO]];
+  self.syncStatus = [self label:@"" size:13 weight:UIFontWeightRegular];
+  self.syncStatus.textColor = [UIColor colorWithWhite:.73 alpha:1];
+  [settings addArrangedSubview:self.syncStatus];
+  [settings addArrangedSubview:[self button:@"Share Startup Log"
+                                      action:@selector(shareLog) primary:NO]];
+  UILabel *hint = [self label:@"In game: tap ⌨ to type, hold ⌨ for options."
+                               size:12 weight:UIFontWeightRegular];
+  hint.textColor = [UIColor colorWithWhite:.65 alpha:1];
+  [settings addArrangedSubview:hint];
+
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(stopped:)
                                                name:@"FactorioStopped"
                                              object:nil];
-  NSString *guest = [NSBundle.mainBundle.privateFrameworksPath
-      stringByAppendingPathComponent:@"FactorioGuest.framework/FactorioGuest"];
-  if ([NSFileManager.defaultManager fileExistsAtPath:guest])
+
+  // Only automatically import bundled game files if the IPA really contains
+  // them. Private --no-data IPAs use the user's existing Documents folder.
+  NSString *bundleData = [NSBundle.mainBundle.bundlePath
+      stringByAppendingPathComponent:@"FactorioData/base/info.json"];
+  if (![FactorioLoader hasValidGameData] &&
+      [NSFileManager.defaultManager fileExistsAtPath:bundleData]) {
+    __weak typeof(self) weak = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-      NSError *e = nil;
-      BOOL ok = [FactorioLoader
-          importSavedGameDataWithProgress:^(double f) {
-          }
-                                    error:&e];
-      if (!ok)
-        dispatch_async(dispatch_get_main_queue(), ^{
-          [self alert:e.localizedDescription
-                          ?: @"Could not import packaged game data."];
-        });
+      NSError *error = nil;
+      BOOL ok = [FactorioLoader importSavedGameDataWithProgress:^(double f) {}
+                                                       error:&error];
+      dispatch_async(dispatch_get_main_queue(), ^{
+        typeof(self) strong = weak;
+        if (!strong) return;
+        [strong refreshState];
+        if (!ok) [strong alert:error.localizedDescription
+                              ?: @"Could not import packaged FactorioData."];
+      });
     });
+  }
 }
-- (UIButton *)button:(NSString *)title action:(SEL)sel {
-  UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-  [b setTitle:title forState:UIControlStateNormal];
-  b.titleLabel.font =
-      [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-  b.backgroundColor = UIColor.secondarySystemBackgroundColor;
-  b.layer.cornerRadius = 10;
-  b.contentEdgeInsets = UIEdgeInsetsMake(14, 12, 14, 12);
-  [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
-  return b;
+
+- (void)viewWillAppear:(BOOL)animated {
+  [super viewWillAppear:animated];
+  self.navigationController.navigationBarHidden = YES;
+  [self refreshState];
+  [self.view setNeedsLayout];
 }
+
+- (void)viewDidLayoutSubviews {
+  [super viewDidLayoutSubviews];
+  UIEdgeInsets insets = self.view.safeAreaInsets;
+  CGRect usable = UIEdgeInsetsInsetRect(self.view.bounds, insets);
+  self.scroller.frame = usable;
+  CGFloat margin = 18, gap = 16;
+  CGFloat width = MAX(1, CGRectGetWidth(usable) - 2 * margin);
+  BOOL sideBySide = CGRectGetWidth(usable) >= 730 &&
+                    CGRectGetWidth(usable) > CGRectGetHeight(usable);
+  if (sideBySide) {
+    CGFloat heroWidth = (width - gap) * .56;
+    CGFloat h = MAX(530, CGRectGetHeight(usable) - 2 * margin);
+    self.heroCard.frame = CGRectMake(margin, margin, heroWidth, h);
+    self.settingsCard.frame = CGRectMake(margin + heroWidth + gap, margin,
+                                        width - heroWidth - gap, h);
+    self.scroller.contentSize = CGSizeMake(CGRectGetWidth(usable), h + 2 * margin);
+  } else {
+    CGFloat heroHeight = 430, settingsHeight = 485;
+    self.heroCard.frame = CGRectMake(margin, margin, width, heroHeight);
+    self.settingsCard.frame = CGRectMake(margin, margin + heroHeight + gap,
+                                        width, settingsHeight);
+    self.scroller.contentSize =
+        CGSizeMake(CGRectGetWidth(usable),
+                   2 * margin + heroHeight + gap + settingsHeight);
+  }
+  self.heroGradient.frame = self.heroCard.bounds;
+}
+
+- (void)refreshState {
+  BOOL ready = [FactorioLoader hasValidGameData];
+  NSString *version = [FactorioLoader installedGameVersion] ?: @"unknown";
+  self.dataStatus.text = ready
+      ? [NSString stringWithFormat:@"●  Game data ready · %@", version]
+      : @"○  Game data missing";
+  self.dataStatus.textColor = ready
+      ? [UIColor colorWithRed:.58 green:.91 blue:.71 alpha:1]
+      : [UIColor colorWithRed:1 green:.75 blue:.43 alpha:1];
+  self.importButton.hidden = ready;
+  self.playButton.enabled = ready;
+  self.playButton.alpha = ready ? 1 : .50;
+  NSArray<NSString *> *graphics = @[@"low", @"medium", @"high"];
+  NSUInteger index = [graphics indexOfObject:FactorioLoader.graphicsPreset ?: @"medium"];
+  self.graphicsControl.selectedSegmentIndex =
+      index == NSNotFound ? 1 : (NSInteger)index;
+  self.controllerControl.selectedSegmentIndex =
+      [NSUserDefaults.standardUserDefaults boolForKey:@"FactorioNativeController"] ? 0 : 1;
+  self.syncStatus.text = [FactorioSaveSync hasFolder]
+      ? @"Save sync folder connected" : @"Save sync not configured";
+}
+
+- (void)changeGraphics:(UISegmentedControl *)control {
+  NSArray *graphics = @[@"low", @"medium", @"high"];
+  NSInteger selected = control.selectedSegmentIndex;
+  if (selected >= 0 && selected < (NSInteger)graphics.count)
+    [NSUserDefaults.standardUserDefaults
+        setObject:graphics[selected] forKey:@"FactorioGraphicsPreset"];
+}
+
+- (void)changeController:(UISegmentedControl *)control {
+  [NSUserDefaults.standardUserDefaults
+      setBool:control.selectedSegmentIndex == 0 forKey:@"FactorioNativeController"];
+}
+
 - (void)importData {
   self.selectingSaveFolder = NO;
-  UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc]
-      initForOpeningContentTypes:@[ UTTypeFolder ]
-                          asCopy:NO];
-  p.delegate = self;
-  [self presentViewController:p animated:YES completion:nil];
+  UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+      initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
+  picker.delegate = self;
+  [self presentViewController:picker animated:YES completion:nil];
 }
+
 - (void)chooseSaveFolder {
   self.selectingSaveFolder = YES;
-  UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc]
-      initForOpeningContentTypes:@[ UTTypeFolder ]
-                          asCopy:NO];
-  p.delegate = self;
-  [self presentViewController:p animated:YES completion:nil];
+  UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+      initForOpeningContentTypes:@[UTTypeFolder] asCopy:NO];
+  picker.delegate = self;
+  [self presentViewController:picker animated:YES completion:nil];
 }
-- (void)documentPicker:(UIDocumentPickerViewController *)p
+
+- (void)documentPicker:(UIDocumentPickerViewController *)picker
     didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-  NSError *e = nil;
-  if (!urls.count)
-    return;
+  if (!urls.count) return;
+  NSError *error = nil;
   if (self.selectingSaveFolder) {
-    BOOL ok = [FactorioSaveSync saveFolder:urls[0] error:&e];
-    if (ok)
-      ok = [FactorioSaveSync synchronize:&e];
+    BOOL ok = [FactorioSaveSync saveFolder:urls[0] error:&error];
+    if (ok) ok = [FactorioSaveSync synchronize:&error];
+    [self refreshState];
     [self alert:ok ? @"Save folder selected and synchronized."
-                   : e.localizedDescription];
+                   : (error.localizedDescription ?: @"Could not configure save sync.")];
   } else {
     BOOL ok = [FactorioLoader selectGameDataFromURL:urls[0]
-                                           progress:^(double f) {
-                                           }
-                                              error:&e];
-    [self alert:ok ? @"FactorioData imported." : e.localizedDescription];
+                                           progress:^(double fraction) {}
+                                              error:&error];
+    [self refreshState];
+    [self alert:ok ? @"FactorioData imported."
+                   : (error.localizedDescription ?: @"Import failed.")];
   }
 }
+
 - (void)play {
-  NSError *e = nil;
-  if ([FactorioSaveSync hasFolder] && ![FactorioSaveSync synchronize:&e]) {
-    [self alert:e.localizedDescription ?: @"Save sync failed."];
+  if (![FactorioLoader hasValidGameData]) {
+    [self refreshState];
+    [self alert:@"Import matching FactorioData before launching."];
     return;
   }
-  [self.navigationController pushViewController:[FactorioGameController new]
-                                       animated:YES];
+  NSError *error = nil;
+  if ([FactorioSaveSync hasFolder] && ![FactorioSaveSync synchronize:&error]) {
+    [self alert:error.localizedDescription ?: @"Save sync failed."];
+    return;
+  }
+  [self.navigationController pushViewController:[FactorioGameController new] animated:YES];
 }
-- (void)cycleGraphics {
-  NSArray *a = @[ @"low", @"medium", @"high" ];
-  NSUInteger i = [a indexOfObject:FactorioLoader.graphicsPreset];
-  [[NSUserDefaults standardUserDefaults] setObject:a[(i + 1) % a.count]
-                                            forKey:@"FactorioGraphicsPreset"];
-  [self alert:[NSString stringWithFormat:@"Graphics preset: %@",
-                                         FactorioLoader.graphicsPreset]];
-}
-- (void)toggleController {
-  NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-  BOOL b = ![d boolForKey:@"FactorioNativeController"];
-  [d setBool:b forKey:@"FactorioNativeController"];
-  [self alert:b ? @"Native controller mode selected."
-                : @"Controller keyboard/mouse emulation selected."];
-}
+
 - (void)shareLog {
-  NSURL *u = FactorioLoader.startupLogURL;
-  if (!u) {
+  NSURL *url = FactorioLoader.startupLogURL;
+  if (!url) {
     [self alert:@"Startup log is not available."];
     return;
   }
-  UIActivityViewController *a =
-      [[UIActivityViewController alloc] initWithActivityItems:@[ u ]
-                                        applicationActivities:nil];
-  a.popoverPresentationController.sourceView = self.view;
-  a.popoverPresentationController.sourceRect = CGRectMake(
-      CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
-  [self presentViewController:a animated:YES completion:nil];
+  UIActivityViewController *controller = [[UIActivityViewController alloc]
+      initWithActivityItems:@[url] applicationActivities:nil];
+  controller.popoverPresentationController.sourceView = self.view;
+  controller.popoverPresentationController.sourceRect =
+      CGRectMake(CGRectGetMidX(self.view.bounds), CGRectGetMidY(self.view.bounds), 1, 1);
+  [self presentViewController:controller animated:YES completion:nil];
 }
-- (void)stopped:(NSNotification *)n {
-  [self alert:n.userInfo[@"message"] ?: @"Factorio stopped."];
+
+- (void)stopped:(NSNotification *)notification {
+  [self alert:notification.userInfo[@"message"] ?: @"Factorio stopped."];
 }
-- (void)alert:(NSString *)m {
-  UIAlertController *a =
-      [UIAlertController alertControllerWithTitle:@"FactoriOS"
-                                          message:m
-                                   preferredStyle:UIAlertControllerStyleAlert];
-  [a addAction:[UIAlertAction actionWithTitle:@"OK"
-                                        style:UIAlertActionStyleDefault
-                                      handler:nil]];
-  [self presentViewController:a animated:YES completion:nil];
+
+- (void)alert:(NSString *)message {
+  UIAlertController *alert = [UIAlertController
+      alertControllerWithTitle:@"FactoriOS"
+                      message:message
+               preferredStyle:UIAlertControllerStyleAlert];
+  [alert addAction:[UIAlertAction actionWithTitle:@"OK"
+                                      style:UIAlertActionStyleDefault handler:nil]];
+  [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 @end
 
