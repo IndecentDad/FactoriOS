@@ -1,5 +1,14 @@
 # FactoriOS Project Status
 
+## Latest — Duo runtime success and UI refinements (not yet built)
+
+- The restored-upstream Factorio 2.1.24 private IPA launched and rendered gameplay on a physical unfolded iPhone Duo. Known-good rollback SHA-256: `f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9`. Preserve that IPA and the existing FactorioData/saves.
+- Device screenshots show the game view still inset/shifted in landscape, portrait gameplay consuming both panels, two persistent top overlay controls, missing keyboard shortcut, and an unattractive nonadaptive launcher.
+- UI-only experiment edits committed: full-scene unfolded Duo landscape viewport; portrait upper-panel game + lower-panel touch controls; controller-aware touch pad; small always-visible keyboard control in lower-right (tap to type, hold for game menu); dynamically hidden Import action when local FactorioData validates; responsive dark game/settings launcher with graphics, controller, save sync, and diagnostics.
+- A read-only FactorioData version/presence method was added to FactorioLoader; game binary patching, FactorioCompat and existing save logic remain unchanged. Build metadata now supports portrait.
+- **IMPORTANT: these new UI changes have NOT been Windows-compiled or physically device-tested.** Codex must run game-free regression tests, compile the SDK 27.2 app, fix any source/SDK issues, generate one new private no-data IPA, run full audit, then request a focused Duo device test. See `docs/NEXT_CODEX_HANDOFF.md` for acceptance criteria.
+
+
 ## Latest — restored original upstream framework routing
 
 - The prior Windows SDK 27.2 build pipeline was NOT semantically equivalent
