@@ -240,12 +240,45 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--inventory", action="store_true", help="Show bounded file/tool inventory, then exit")
     p.add_argument("--status", action="store_true", help="Read the last build stage and tail of its persistent log")
+    p.add_argument("--audit-only", type=Path, metavar="EXISTING_IPA",
+                   help="Run the current dependency audit against an existing private IPA without rebuilding")
     p.add_argument("--dmg", type=Path, help="Original Factorio 2.1.24 Mac DMG")
     p.add_argument("--template", type=Path, help="Reuse a successfully built game-free SDK 27.2 template instead of recompiling")
     p.add_argument("--seven-zip", type=Path, default=SEVEN_ZIP)
     args = p.parse_args()
     if args.status:
         return show_status()
+    if args.audit_only is not None:
+        ipa = args.audit_only.resolve()
+        if not ipa.is_file():
+            raise FileNotFoundError(f"Existing IPA not found: {ipa}")
+        tag = "audit-existing-" + ipa.parent.name
+        logfile = DIST / "build_private_duo_logs" / (tag + ".log")
+        report_status("verify-existing-ipa", "running", tag, logfile, ipa=str(ipa))
+        # Recheck embedded binary metadata, executable flags, and ZIP integrity;
+        # do not touch FactorioData, original DMG, or a compiler.
+        guest_sha, compat_sha = verify_output(ipa)
+        print(f"Existing IPA: {ipa}", flush=True)
+        print(f"IPA SHA-256: {sha256_file(ipa)}", flush=True)
+        print(f"FactorioGuest SHA-256: {guest_sha}", flush=True)
+        print(f"FactorioCompat SHA-256: {compat_sha}", flush=True)
+        report_status("audit-existing-ipa", "running", tag, logfile, ipa=str(ipa))
+        cmd = [sys.executable, "-u", str(ROOT / "Tools" / "audit_macho_imports.py"),
+               "--ipa", str(ipa), "--report-dir", str(ipa.parent / "audit")]
+        logfile.parent.mkdir(parents=True, exist_ok=True)
+        with logfile.open("a", encoding="utf-8") as out:
+            out.write(f"\n==== {datetime.now().isoformat()} {cmd!r} ====\n")
+            out.flush()
+            audit = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT,
+                                   text=True, errors="replace")
+        print("Audit output recorded in:", logfile, flush=True)
+        if audit.returncode:
+            report_status("audit-existing-ipa", "failed", tag, logfile, ipa=str(ipa),
+                          audit_exit_code=audit.returncode)
+            return 2
+        report_status("audit-existing-ipa", "completed", tag, logfile, ipa=str(ipa))
+        print("FactorioCompat-scoped strong binding audit passed. Separate full guest/runtime verification remains required.", flush=True)
+        return 0
     dmgs = discover_dmgs()
     if args.inventory:
         describe_host(dmgs)
