@@ -69,187 +69,200 @@
 }
 @end
 
+
 @interface FactorioTouchUIKit ()
 @property(nonatomic, strong) FactorioMovePad *pad;
 @property(nonatomic, strong) NSMutableArray<UIButton *> *buttons;
-@property(nonatomic, strong) UIButton *toggle;
-@property(nonatomic, strong) UIButton *exitButton;
+@property(nonatomic, strong) UIButton *keyboardButton;
 @property(nonatomic) BOOL showing;
 @end
+
 @implementation FactorioTouchUIKit
-- (instancetype)initWithFrame:(CGRect)f {
-  if ((self = [super initWithFrame:f])) {
+
+- (instancetype)initWithFrame:(CGRect)frame {
+  if ((self = [super initWithFrame:frame])) {
     self.backgroundColor = UIColor.clearColor;
     self.buttons = [NSMutableArray array];
     self.showing = YES;
+    _enabled = YES;
     self.pad = [[FactorioMovePad alloc] initWithFrame:CGRectZero];
     [self addSubview:self.pad];
-    NSArray *titles = @[
+
+    NSArray<NSString *> *titles = @[
       @"Build", @"Mine", @"Turn", @"Pick", @"Items", @"Map", @"Research",
-      @"Zoom +", @"Zoom −", @"Keyboard"
+      @"Zoom +", @"Zoom −"
     ];
     for (NSUInteger i = 0; i < titles.count; i++) {
-      UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
-      [b setTitle:titles[i] forState:UIControlStateNormal];
-      b.titleLabel.font = [UIFont systemFontOfSize:12
-                                            weight:UIFontWeightSemibold];
-      b.backgroundColor = [UIColor colorWithWhite:.08 alpha:.82];
-      [b setTitleColor:[UIColor colorWithRed:.96 green:.73 blue:.39 alpha:1]
-              forState:UIControlStateNormal];
-      b.layer.cornerRadius = 12;
-      b.layer.borderWidth = 1;
-      b.layer.borderColor = [UIColor colorWithWhite:.6 alpha:.35].CGColor;
-      b.tag = i;
-      [b addTarget:self
-                    action:@selector(down:)
-          forControlEvents:UIControlEventTouchDown];
-      [b addTarget:self
-                    action:@selector(up:)
-          forControlEvents:UIControlEventTouchUpInside |
-                           UIControlEventTouchUpOutside |
-                           UIControlEventTouchCancel];
-      [self addSubview:b];
-      [self.buttons addObject:b];
+      UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
+      [button setTitle:titles[i] forState:UIControlStateNormal];
+      button.titleLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
+      button.backgroundColor = [UIColor colorWithWhite:.07 alpha:.80];
+      [button setTitleColor:[UIColor colorWithRed:.96 green:.73 blue:.39 alpha:1]
+                   forState:UIControlStateNormal];
+      button.layer.cornerRadius = 12;
+      button.layer.borderWidth = 1;
+      button.layer.borderColor = [UIColor colorWithWhite:.6 alpha:.35].CGColor;
+      button.tag = i;
+      [button addTarget:self action:@selector(down:)
+           forControlEvents:UIControlEventTouchDown];
+      [button addTarget:self action:@selector(up:)
+           forControlEvents:UIControlEventTouchUpInside |
+                            UIControlEventTouchUpOutside |
+                            UIControlEventTouchCancel];
+      [self addSubview:button];
+      [self.buttons addObject:button];
     }
-    self.exitButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.exitButton setTitle:@"Home" forState:UIControlStateNormal];
-    self.exitButton.backgroundColor = [UIColor colorWithWhite:.08 alpha:.75];
-    self.exitButton.layer.cornerRadius = 10;
-    [self.exitButton addTarget:self
-                        action:@selector(exitGame)
-              forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:self.exitButton];
-    self.toggle = [UIButton buttonWithType:UIButtonTypeSystem];
-    [self.toggle setTitle:@"Hide pad" forState:UIControlStateNormal];
-    self.toggle.titleLabel.font = [UIFont systemFontOfSize:11
-                                                    weight:UIFontWeightMedium];
-    self.toggle.backgroundColor = [UIColor colorWithWhite:.08 alpha:.72];
-    self.toggle.layer.cornerRadius = 10;
-    [self.toggle addTarget:self
-                    action:@selector(togglePad)
-          forControlEvents:UIControlEventTouchUpInside];
-    [self addSubview:self.toggle];
+
+    // Even with a connected controller, the keyboard remains reachable.
+    // The old top-screen Home and Show Pad buttons are intentionally gone.
+    self.keyboardButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIImage *icon = [UIImage systemImageNamed:@"keyboard"];
+    [self.keyboardButton setImage:icon forState:UIControlStateNormal];
+    if (!icon) [self.keyboardButton setTitle:@"⌨" forState:UIControlStateNormal];
+    self.keyboardButton.tintColor = UIColor.whiteColor;
+    self.keyboardButton.backgroundColor = [UIColor colorWithWhite:.04 alpha:.76];
+    self.keyboardButton.layer.cornerRadius = 11;
+    self.keyboardButton.layer.borderWidth = .5;
+    self.keyboardButton.layer.borderColor = [UIColor colorWithWhite:.7 alpha:.45].CGColor;
+    self.keyboardButton.accessibilityLabel = @"Keyboard";
+    self.keyboardButton.accessibilityHint = @"Tap to type, hold for game options";
+    [self.keyboardButton addTarget:self action:@selector(openKeyboard)
+                   forControlEvents:UIControlEventTouchUpInside];
+    UILongPressGestureRecognizer *hold =
+        [[UILongPressGestureRecognizer alloc] initWithTarget:self
+                                                     action:@selector(keyboardLongPress:)];
+    hold.minimumPressDuration = .48;
+    [self.keyboardButton addGestureRecognizer:hold];
+    [self addSubview:self.keyboardButton];
   }
   return self;
 }
-- (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)e {
-  if (!self.enabled)
-    return NO;
-  if (CGRectContainsPoint(self.pad.frame, p) && self.showing)
-    return YES;
-  if (CGRectContainsPoint(self.toggle.frame, p) ||
-      CGRectContainsPoint(self.exitButton.frame, p))
-    return YES;
-  for (UIButton *b in self.buttons)
-    if (!b.hidden && CGRectContainsPoint(b.frame, p))
-      return YES;
+
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+  if (CGRectContainsPoint(self.keyboardButton.frame, point)) return YES;
+  if (!self.showing) return NO;
+  if (CGRectContainsPoint(self.pad.frame, point)) return YES;
+  for (UIButton *button in self.buttons) {
+    if (!button.hidden && CGRectContainsPoint(button.frame, point)) return YES;
+  }
   return NO;
 }
+
 - (void)layoutSubviews {
   [super layoutSubviews];
-  CGFloat d = MIN(150, MAX(112, self.bounds.size.height * .25));
-  self.pad.frame = CGRectMake(20, self.bounds.size.height - d - 18, d, d);
+  CGFloat height = self.bounds.size.height;
+  CGFloat width = self.bounds.size.width;
+  CGFloat diameter = MIN(146, MAX(100, height * .30));
+  self.pad.frame = CGRectMake(18, height - diameter - 16, diameter, diameter);
   self.pad.hidden = !self.showing;
-  CGFloat w = 56, h = 46, g = 7;
-  CGFloat right = self.bounds.size.width - 20;
+  CGFloat w = 54, h = 43, gap = 7;
+  CGFloat right = width - 18;
   for (NSUInteger i = 0; i < self.buttons.count; i++) {
-    UIButton *b = self.buttons[i];
     NSUInteger col = i % 2, row = i / 2;
-    b.frame =
-        CGRectMake(right - 2 * w - g + col * (w + g),
-                   self.bounds.size.height - 18 - (row + 1) * (h + g), w, h);
-    b.hidden = !self.showing;
+    UIButton *button = self.buttons[i];
+    // Avoid the persistent keyboard button at the bottom-right.
+    button.frame = CGRectMake(right - 2 * w - gap + col * (w + gap),
+                              height - 70 - (row + 1) * (h + gap), w, h);
+    button.hidden = !self.showing;
   }
-  self.toggle.frame = CGRectMake(right - 100, 12, 100, 34);
-  self.exitButton.frame = CGRectMake(20, 12, 72, 34);
-  [self.toggle setTitle:self.showing ? @"Hide pad" : @"Show pad"
-               forState:UIControlStateNormal];
+  self.keyboardButton.frame = CGRectMake(right - 46, height - 58, 46, 46);
+  [self bringSubviewToFront:self.keyboardButton];
 }
-- (void)exitGame {
-  if (self.onExit)
-    self.onExit();
-}
-- (void)togglePad {
-  self.showing = !self.showing;
-  self.pad.hidden = !self.showing;
-  for (UIButton *b in self.buttons)
-    b.hidden = !self.showing;
-  [self setNeedsLayout];
-}
-- (NSArray<NSNumber *> *)keyForButton:(NSInteger)i {
-  switch (i) {
-  case 2:
-    return @[ @21, @114 ];
-  case 3:
-    return @[ @20, @113 ];
-  case 4:
-    return @[ @8, @101 ];
-  case 5:
-    return @[ @16, @109 ];
-  case 6:
-    return @[ @23, @116 ];
-  default:
-    return @[];
-  }
-}
-- (void)setEnabled:(BOOL)e {
+
+- (void)setEnabled:(BOOL)enabled {
+  // enabled controls the optional touch pad, never keyboard availability.
   _enabled = YES;
   self.hidden = NO;
-  self.showing = e;
-  self.pad.hidden = !e;
-  for (UIButton *b in self.buttons)
-    b.hidden = !e;
-  self.toggle.hidden = NO;
+  self.showing = enabled;
+  self.pad.hidden = !enabled;
+  for (UIButton *button in self.buttons) button.hidden = !enabled;
+  self.keyboardButton.hidden = NO;
+  [self setNeedsLayout];
 }
-- (void)down:(UIButton *)b {
-  if (b.tag == 0 || b.tag == 1) {
-    CGPoint p = FactorioControllerBridgeGetCursorPosition();
-    FactorioTouchMouseButton(b.tag == 0 ? 1 : 3, true, (int)p.x, (int)p.y);
-    return;
-  }
-  if (b.tag == 7) {
-    FactorioMouseWheel(0, 1);
-    return;
-  }
-  if (b.tag == 8) {
-    FactorioMouseWheel(0, -1);
-    return;
-  }
-  if (b.tag == 9) {
-    UIAlertController *a = [UIAlertController
-        alertControllerWithTitle:@"Keyboard"
-                         message:nil
-                  preferredStyle:UIAlertControllerStyleAlert];
-    [a addTextFieldWithConfigurationHandler:^(UITextField *t) {
-      t.placeholder = @"Type text for Factorio";
-    }];
-    [a addAction:[UIAlertAction actionWithTitle:@"Send"
-                                          style:UIAlertActionStyleDefault
-                                        handler:^(UIAlertAction *x) {
-                                          FactorioKeyboardInsertText(
-                                              a.textFields.firstObject.text
-                                                  ?: @"");
-                                        }]];
-    [a addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                          style:UIAlertActionStyleCancel
-                                        handler:nil]];
-    [self.window.rootViewController presentViewController:a
-                                                 animated:YES
-                                               completion:nil];
-    return;
-  }
-  NSArray<NSNumber *> *k = [self keyForButton:b.tag];
-  if (k.count == 2)
-    FactorioKeyboardTouchKeyDown(k[0].intValue, k[1].intValue);
+
+- (void)keyboardLongPress:(UILongPressGestureRecognizer *)recognizer {
+  if (recognizer.state != UIGestureRecognizerStateBegan) return;
+  UIAlertController *menu = [UIAlertController
+      alertControllerWithTitle:@"FactoriOS"
+                      message:nil
+               preferredStyle:UIAlertControllerStyleActionSheet];
+  __weak typeof(self) weak = self;
+  [menu addAction:[UIAlertAction actionWithTitle:
+       self.showing ? @"Hide touch controls" : @"Show touch controls"
+       style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+         typeof(self) strong = weak;
+         if (!strong) return;
+         strong.showing = !strong.showing;
+         strong.pad.hidden = !strong.showing;
+         for (UIButton *button in strong.buttons) button.hidden = !strong.showing;
+         [strong setNeedsLayout];
+       }]];
+  [menu addAction:[UIAlertAction actionWithTitle:@"Return to FactoriOS"
+       style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+         typeof(self) strong = weak;
+         if (strong.onExit) strong.onExit();
+       }]];
+  [menu addAction:[UIAlertAction actionWithTitle:@"Cancel"
+       style:UIAlertActionStyleCancel handler:nil]];
+  menu.popoverPresentationController.sourceView = self.keyboardButton;
+  menu.popoverPresentationController.sourceRect = self.keyboardButton.bounds;
+  [self.window.rootViewController presentViewController:menu
+                                              animated:YES completion:nil];
 }
-- (void)up:(UIButton *)b {
-  if (b.tag == 0 || b.tag == 1) {
+
+- (void)openKeyboard {
+  UIAlertController *alert = [UIAlertController
+      alertControllerWithTitle:@"Keyboard"
+                      message:nil
+               preferredStyle:UIAlertControllerStyleAlert];
+  [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+    field.placeholder = @"Type for Factorio";
+    field.autocorrectionType = UITextAutocorrectionTypeNo;
+    field.autocapitalizationType = UITextAutocapitalizationTypeNone;
+  }];
+  [alert addAction:[UIAlertAction actionWithTitle:@"Send"
+       style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+         NSString *value = alert.textFields.firstObject.text ?: @"";
+         if (value.length) FactorioKeyboardInsertText(value);
+       }]];
+  [alert addAction:[UIAlertAction actionWithTitle:@"Cancel"
+       style:UIAlertActionStyleCancel handler:nil]];
+  [self.window.rootViewController presentViewController:alert
+                                              animated:YES completion:nil];
+}
+
+- (NSArray<NSNumber *> *)keyForButton:(NSInteger)index {
+  switch (index) {
+    case 2: return @[@21, @114];
+    case 3: return @[@20, @113];
+    case 4: return @[@8, @101];
+    case 5: return @[@16, @109];
+    case 6: return @[@23, @116];
+    default: return @[];
+  }
+}
+
+- (void)down:(UIButton *)button {
+  if (button.tag == 0 || button.tag == 1) {
     CGPoint p = FactorioControllerBridgeGetCursorPosition();
-    FactorioTouchMouseButton(b.tag == 0 ? 1 : 3, false, (int)p.x, (int)p.y);
+    FactorioTouchMouseButton(button.tag == 0 ? 1 : 3, true, (int)p.x, (int)p.y);
     return;
   }
-  NSArray<NSNumber *> *k = [self keyForButton:b.tag];
-  if (k.count == 2)
-    FactorioKeyboardTouchKeyUp(k[0].intValue, k[1].intValue);
+  if (button.tag == 7 || button.tag == 8) {
+    FactorioMouseWheel(0, button.tag == 7 ? 1 : -1);
+    return;
+  }
+  NSArray<NSNumber *> *keys = [self keyForButton:button.tag];
+  if (keys.count == 2) FactorioKeyboardTouchKeyDown(keys[0].intValue, keys[1].intValue);
+}
+
+- (void)up:(UIButton *)button {
+  if (button.tag == 0 || button.tag == 1) {
+    CGPoint p = FactorioControllerBridgeGetCursorPosition();
+    FactorioTouchMouseButton(button.tag == 0 ? 1 : 3, false, (int)p.x, (int)p.y);
+    return;
+  }
+  NSArray<NSNumber *> *keys = [self keyForButton:button.tag];
+  if (keys.count == 2) FactorioKeyboardTouchKeyUp(keys[0].intValue, keys[1].intValue);
 }
 @end
