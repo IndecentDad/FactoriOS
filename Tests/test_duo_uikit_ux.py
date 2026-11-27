@@ -19,6 +19,8 @@ class DuoUIKitUXTests(unittest.TestCase):
         self.assertIn("UIInterfaceOrientationMaskAllButUpsideDown", APP)
         self.assertNotIn("initWithInterfaceOrientations:UIInterfaceOrientationMaskLandscape", APP)
         self.assertIn("BOOL duoPortrait", APP)
+        self.assertIn("BOOL unfoldedDuo", APP)
+        self.assertIn("CGRect gameRect = unfoldedDuo ? bounds : usable", APP)
         self.assertIn("CGFloat hinge = CGRectGetMidY(bounds)", APP)
         self.assertIn("self.gameView.frame = CGRectIntegral(gameRect)", APP)
         self.assertIn("self.touchPad.frame = CGRectIntegral(controlsRect)", APP)
@@ -47,6 +49,9 @@ class DuoUIKitUXTests(unittest.TestCase):
         self.assertIn("[FactorioLoader hasValidGameData]", APP)
         self.assertIn("self.importButton.hidden = ready;", APP)
         self.assertIn("self.playButton.enabled = ready;", APP)
+        self.assertIn("fileExistsAtPath:bundleData", APP)
+        self.assertIn("self.graphicsControl = [[UISegmentedControl alloc]", APP)
+        self.assertIn("self.controllerControl = [[UISegmentedControl alloc]", APP)
         self.assertIn("FactorioDataProblem(path, version) == nil", LOADER)
         self.assertIn("initWithItems:@[", APP)
 
