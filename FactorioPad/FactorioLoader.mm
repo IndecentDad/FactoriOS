@@ -737,6 +737,21 @@ static void *FactorioOpenFramework(NSString *name, int flags)
     return [NSDictionary dictionaryWithContentsOfFile:path][@"CFBundleShortVersionString"];
 }
 
++ (BOOL)hasValidGameData
+{
+    NSString *version = [self guestVersion];
+    if (!version.length) { return NO; }
+    NSString *path = FactorioImportedDataPath(FactorioWritableRoot());
+    // FactorioDataProblem is read-only. Avoid recovery, deletion, migration
+    // or any interaction with saved games merely to update the launcher.
+    return FactorioDataProblem(path, version) == nil;
+}
+
++ (NSString *)installedGameVersion
+{
+    return [self guestVersion];
+}
+
 + (NSURL *)startupLogURL
 {
     return FactorioStartupLog;
