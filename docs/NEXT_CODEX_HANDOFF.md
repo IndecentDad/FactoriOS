@@ -1,3 +1,44 @@
+## Platform-parity correction — original iPad UI must be preserved
+
+The original Xcode project in main and experiment has the EXACT SAME Git blob
+(897533bcdfe0a93432b11408b1f781db89e00472), with
+TARGETED_DEVICE_FAMILY = "1,2" and UIRequiresFullScreen = NO.
+The experiment comparison with main shows zero Swift files modified or deleted.
+The iPad/Swift functionality was not removed from GitHub.
+
+However, Tools/build_windows_template.py compiles only .c/.m/.mm sources.
+It does not compile ANY of the Swift UI; it uses FactorioUIKitApp.m as its
+replacement app shell. THIS IS NOT feature parity with the established
+FactorioPad iPad implementation: the old touch guide/palette, external display
+workflow, and other Swift-specific features may be absent in this IPA.
+Do not call the Windows build a replacement for the production iPad app.
+
+The Windows Info.plist generator previously OMITTED UIDeviceFamily; we have
+fixed it to [1,2] matching the original Xcode target and added a packaging
+regression assertion (UIRequiresFullScreen remains NO). This fixes the
+universal-install targeting metadata. IT DOES NOT restore old Swift-only UX.
+A small / windowed iPad presentation may additionally be normal iPadOS
+windowing; check window size and stage/windowing mode without assuming
+the app has lost iPad support.
+
+Preservation plan:
+1. Keep main/Xcode Swift iPad build pipeline and any known-good iPad IPA intact.
+2. Keep Windows SDK27 Duo native Objective-C app shell on experiment only.
+3. Do not rewrite or reimplement the Swift iPad interface in Objective-C
+   just to address an incorrect Windows-produced IPA's device-family metadata.
+4. For iPad support, use the original Xcode build path for now; separately
+   verify native iPad packaging and UX of the Windows shell if a SINGLE
+   universal Windows-built IPA is an explicit goal. That latter feature parity
+   cannot be claimed without implementation and hardware tests.
+5. First run game-free Windows template build and
+   Tests/test_windows_native_ipa.py to verify UIDeviceFamily [1,2].
+   This is a packaging-only change. No FactorioGuest or FactorioData rebuild
+   or save-file changes are needed.
+6. Do not replace the user's stable iPad installation with this experiment
+   pending comparison. Do not merge the experiment's Objective-C shell into
+   main without an explicit iPad parity review.
+
+
 # FactoriOS Windows SDK 27.2 — Duo UI validation
 
 ## Known working baseline
