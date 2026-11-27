@@ -97,11 +97,11 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
 
     def is_mobilecoreservices_framework(path: str) -> bool:
         return bool(__import__("re").search(
-            r"/MobileCoreServices\\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", path))
+            r"/MobileCoreServices\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", path))
 
     def is_libsystem(path: str) -> bool:
         return bool(__import__("re").search(
-            r"/libSystem(?:\\.B)?\\.dylib$", path))
+            r"/libSystem(?:\.B)?\.dylib$", path))
 
     providers = {
         "IOKit": any(is_iokit_framework(path) for path in reexports),
