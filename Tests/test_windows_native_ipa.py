@@ -14,6 +14,10 @@ def main():
         prefix=app_prefix(z); names=set(z.namelist()); info=plistlib.loads(z.read(prefix+"Info.plist"))
         assert info.get("CFBundleIdentifier")=="pl.adrian.FactorioPad"
         assert info.get("CFBundleExecutable")=="FactorioPad"
+        # The original FactorioPad Xcode build is universal (iPhone 1 / iPad 2).
+        # Prevent a Windows-only packaging regression to iPhone compatibility.
+        assert info.get("UIDeviceFamily")==[1,2], info.get("UIDeviceFamily")
+        assert info.get("UIRequiresFullScreen") is False
         assert info.get("FactorioPadExternalDataVersion")==1
         assert info.get("UISupportedInterfaceOrientations")==["UIInterfaceOrientationPortrait","UIInterfaceOrientationLandscapeLeft","UIInterfaceOrientationLandscapeRight"]
         assert prefix+"FactoriOS-icon.png" in names
