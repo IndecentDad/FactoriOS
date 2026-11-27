@@ -317,19 +317,51 @@ def main() -> int:
         cmd = [sys.executable, "-u", str(ROOT / "Tools" / "audit_macho_imports.py"),
                "--ipa", str(ipa), "--report-dir", str(ipa.parent / "audit")]
         logfile.parent.mkdir(parents=True, exist_ok=True)
+        # A historical log can contain a previous failed audit followed by a
+        # later clean one. Record a separate latest-run transcript and the
+        # *actual subprocess exit code* for this exact IPA, every time.
+        audit = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+        finished = datetime.now().isoformat(timespec="seconds")
+        ipa_sha = sha256_file(ipa)
+        latest_output = ipa.parent / "audit-latest-output.txt"
+        latest_result = ipa.parent / "audit-latest-result.json"
+        transcript = (
+            f"Audit completed: {finished}\n"
+            f"IPA: {ipa}\n"
+            f"IPA SHA-256: {ipa_sha}\n"
+            f"Process exit code: {audit.returncode}\n"
+            f"Command: {cmd!r}\n"
+            f"\n==== stdout ====\n{audit.stdout}"
+            f"\n==== stderr ====\n{audit.stderr}\n"
+        )
+        latest_output.write_text(transcript, encoding="utf-8")
+        latest_result.write_text(json.dumps({
+            "ipa": str(ipa),
+            "ipa_sha256": ipa_sha,
+            "finished": finished,
+            "audit_exit_code": audit.returncode,
+            "audit_passed": audit.returncode == 0,
+            "latest_output": str(latest_output),
+            "report_dir": str(ipa.parent / "audit"),
+            "device_launch_validated": False,
+        }, indent=2), encoding="utf-8")
         with logfile.open("a", encoding="utf-8") as out:
-            out.write(f"\n==== {datetime.now().isoformat()} {cmd!r} ====\n")
-            out.flush()
-            audit = subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT,
-                                   text=True, errors="replace")
-        print("Audit output recorded in:", logfile, flush=True)
+            out.write("\n==== Latest existing IPA audit ====\n")
+            out.write(transcript)
+        print(f"Latest audit transcript: {latest_output}", flush=True)
+        print(f"Latest audit result: {latest_result}", flush=True)
+        print(f"Audit process exit code: {audit.returncode}", flush=True)
         if audit.returncode:
+            print((audit.stderr + "\n" + audit.stdout)[-9000:], flush=True)
             report_status("audit-existing-ipa", "failed", tag, logfile, ipa=str(ipa),
-                          audit_exit_code=audit.returncode)
+                          audit_exit_code=audit.returncode,
+                          audit_latest_result=str(latest_result), ipa_sha256=ipa_sha)
             return 2
-        report_status("audit-existing-ipa", "completed", tag, logfile, ipa=str(ipa))
+        report_status("audit-existing-ipa", "completed", tag, logfile, ipa=str(ipa),
+                      audit_exit_code=0,
+                      audit_latest_result=str(latest_result), ipa_sha256=ipa_sha)
         print("Full host-side FactorioCompat reexport and native-framework import audit passed.", flush=True)
-        print("This confirms no imports were left unverified by the audit; physical Duo launch remains untested.", flush=True)
+        print("Device dyld, initialization, and gameplay remain untested.", flush=True)
         return 0
     dmgs = discover_dmgs()
     if args.inventory:
