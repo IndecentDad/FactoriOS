@@ -124,6 +124,8 @@ PROVIDER_LINK_FLAGS = {
     "libcompression": ["-lcompression"],
     "libiconv": ["-liconv"],
     "libxml2": ["-lxml2"],
+    "libdispatch": ["-ldispatch"],
+    "libc++abi": ["-lc++abi"],
 }
 
 
@@ -139,7 +141,7 @@ def native_provider_from_line(line: str) -> tuple[str | None, str | None]:
     # for Foundation. llvm-objdump may show names or full install paths.
     name = raw_provider.split("/")[-1]
     if name.endswith(".dylib"):
-        name = re.sub(r"(?:\.[AB])?\.dylib$", "", name)
+        name = re.sub(r"(?:\.[A-Za-z0-9]+)?\.dylib$", "", name)
     if name in PROVIDER_LINK_FLAGS:
         return name, cols[-1]
     # Known framework install-name aliases (including macOS versioned paths).
