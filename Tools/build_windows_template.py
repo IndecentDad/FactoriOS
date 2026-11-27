@@ -13,7 +13,7 @@ CLANG, CLANGXX = LLVM / "clang.exe", LLVM / "clang++.exe"
 LD, READOBJ = LLVM / "ld64.lld.exe", LLVM / "llvm-readobj.exe"
 FRAMEWORKS = ["Foundation", "UIKit", "QuartzCore", "CoreGraphics", "CoreFoundation",
               "GameController", "Metal", "AudioToolbox", "CoreAudio", "CoreVideo",
-              "Security", "IOKit", "AVFAudio"]
+              "Security", "IOKit", "MobileCoreServices", "AVFAudio"]
 
 
 def run(args: list[str], quiet: bool = False) -> str:
@@ -95,14 +95,29 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
         return (len(parts) >= 4 and parts[-4] == "IOKit.framework"
                 and parts[-3] == "Versions" and bool(parts[-2]))
 
-    if not any(is_iokit_framework(path) for path in reexports):
+    def is_mobilecoreservices_framework(path: str) -> bool:
+        return bool(__import__("re").search(
+            r"/MobileCoreServices\\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", path))
+
+    def is_libsystem(path: str) -> bool:
+        return bool(__import__("re").search(
+            r"/libSystem(?:\\.B)?\\.dylib$", path))
+
+    providers = {
+        "IOKit": any(is_iokit_framework(path) for path in reexports),
+        "MobileCoreServices": any(is_mobilecoreservices_framework(path) for path in reexports),
+        "libSystem": any(is_libsystem(path) for path in reexports),
+    }
+    missing_providers = [provider for provider, present in providers.items() if not present]
+    if missing_providers:
         raise RuntimeError(
-            "Native IOKit LC_REEXPORT_DYLIB missing. "
-            f"Reexports: {reexports}; ordinary/weak loads: {ordinary_loads}. "
-            "An LC_LOAD_DYLIB alone cannot resolve guest symbols via FactorioCompat.")
+            f"Native LC_REEXPORT_DYLIB missing: {missing_providers}; "
+            f"actual reexports: {reexports}; ordinary/weak loads: {ordinary_loads}. "
+            "LC_LOAD_DYLIB alone cannot satisfy guest symbols through FactorioCompat.")
 
     print("validated FactorioCompat exports: NSColor, legacy UTType globals")
-    print("validated native IOKit reexport: " + ", ".join(reexports))
+    print("validated native IOKit, MobileCoreServices and libSystem reexports: "
+          + ", ".join(reexports))
 
 
 def compile_sources(sources: list[pathlib.Path], output: pathlib.Path, cache: pathlib.Path) -> list[pathlib.Path]:
@@ -142,14 +157,16 @@ def build_compat() -> pathlib.Path:
     args = [str(LD), "-dylib", "-arch", "arm64", "-platform_version", "ios", MIN_IOS, SDK_VERSION,
             "-syslibroot", str(SDK), "-install_name", "@rpath/FactorioCompat.framework/FactorioCompat",
             "-current_version", "2.3.0", "-compatibility_version", "1.0", "-undefined", "error",
-            "-lSystem", "-lobjc"]
+            "-reexport-lSystem", "-lobjc"]
     for name in FRAMEWORKS:
         # FactorioGuest's original macOS IOKit imports still bind to the
         # FactorioCompat dylib. Reexport the real iOS IOKit API through that
         # dylib while keeping local shims for unavailable macOS-only symbols
         # (such as IODisplayCreateInfoDictionary). This preserves the guest's
         # existing library ordinals; dyld can follow LC_REEXPORT_DYLIB.
-        args += ["-reexport_framework" if name == "IOKit" else "-framework", name]
+        # Legacy UTType C functions remain available in MobileCoreServices
+        # on iOS. Reexport that native provider rather than cloning the APIs.
+        args += ["-reexport_framework" if name in {"IOKit", "MobileCoreServices"} else "-framework", name]
     run(args + ["-o", str(binary), *map(str, objects)])
     verify_macho(binary)
     verify_dependencies(binary)
