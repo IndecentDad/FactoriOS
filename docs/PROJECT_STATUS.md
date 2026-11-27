@@ -1,26 +1,30 @@
 # FactoriOS Project Status
 
-## iPad compatibility preservation (not yet compiled)
+## Duo baseline
 
-- The original Swift/iPad app remains in the repo. Comparing main with the experiment shows no deleted or modified Swift UI files. The Xcode target's original device family is 1,2.
-- The Windows SDK 27.2 builder compiles C/Objective-C and substitutes a separate UIKit shell; it does NOT include the richer original Swift iPad UI. Do not treat it as a drop-in replacement.
-- Windows template generation previously omitted UIDeviceFamily. It now stamps [1,2] and UIRequiresFullScreen=false; the IPA metadata test requires these.
-- Xcode's automatically synchronized FactorioPad folder would include the new Windows-only main.m/UIKit files. The Xcode target now explicitly excludes the Windows shell files; a game-free build-boundary test checks this.
-- NO new IPA has been compiled for this metadata change, and the original Swift/iPad path has not been compiled with Xcode during this pass. Preserve known-good Duo IPA, original iPad build and installation, data/saves, and main. Never port all original Swift iPad features to Objective-C to fix an Info.plist error.
+- User-confirmed: Factorio 2.1.24 now fully launches and works on iPhone Duo. Preserve the confirmed IPA `F:\FactoriOS\dist\private-duo-ios27-routing-20261127-010338-b79857c\FactorioPad.ipa` (SHA-256 `b656cefa5ef5e52d5bbc2d7509c1d977ddb7a01d04ba0a57dc34b2e08667a8bf`).
+- Keep existing FactorioData and saves untouched. The existing private build contains no FactorioData and uses separate installed data.
 
-## Current milestone — Duo UI candidate ready for device validation
+## iPad and external-display preservation
 
-- The original Factorio 2.1.24 guest launches on the physical unfolded iPhone Duo. Preserve rollback IPA SHA-256 `f74007552be18f9fa1fe795ba2b40d1e87136bc31d6ba92e24243a4d077549d9`.
-- UI work from source `b79857c3` compiled with the Windows iPhoneOS SDK 27.2 and produced a new unsigned private IPA: `F:\FactoriOS\dist\private-duo-ios27-routing-20261127-010338-b79857c\FactorioPad.ipa`.
-- Candidate IPA SHA-256: `b656cefa5ef5e52d5bbc2d7509c1d977ddb7a01d04ba0a57dc34b2e08667a8bf`. FactorioGuest SHA-256: `bc21ab31d38c73470f3a31c9be031eb8759577a04276e7ed4c94a7005527dffc`. FactorioCompat SHA-256: `ff2d265a2e87cadb0b53c1c1b57368dd67fa786c3bcb598a87059091211f1829`.
-- Build reused `F:\FactoriOS\dist\FactoriOS-template.ipa`, repatched the guest from the original 2.1.24 DMG, and did not access or regenerate FactorioData. Existing saves and baseline were left untouched.
-- Tests passed: Duo UIKit UX regression (6); upstream framework-routing regression (4); game-free template package validation (arm64/iOS SDK 27.2); private IPA structural checks; full exact-IPA audit (319 compatibility bindings verified, 564 native bindings checked, zero unverified strong/lazy imports).
-- Build log: `F:\FactoriOS\dist\build_private_duo_logs\ios27-routing-20261127-010338-b79857c.log`. Source changes were not required; compiled source revision remains `b79857c3`.
+- The original Swift/Xcode iPad implementation remains present and unchanged versus own `main` and upstream `MyNameIsArko/FactorioPad` `main` for the requested six Swift UI files and two keyboard/controller bridges. The Xcode target excludes the separate Windows Objective-C entry/UI files.
+- Windows template metadata now matches the Xcode target: `UIDeviceFamily = [1,2]`, `UIRequiresFullScreen = false`, portrait/landscape iPad orientations. This removes iPhone-only/compatibility-mode packaging; it does not claim the UIKit shell has all Swift UI parity.
+- Upstream Swift input supports touch guide/palette, custom on-screen keyboard, physical keyboard/mouse, controller/cursor, preferences and save sync. On iPad with native controller it captures a physical pointer without an external screen, releases lock when another screen connects, and reapplies the policy on screen/pointer-lock changes. It uses the active scene's screen for geometry and routes unlocked pointer position, clicks and scrolling through UIKit. It does not create/manage a dedicated external-display gameplay scene; separate-screen placement is unverified.
+- Windows UIKit already had scene-sized geometry, iPad pointer-lock preference updates and native controller/mouse/keyboard paths. It lacked the Swift raw-versus-unlocked input distinction. Commits `61811ab` and `c3b1018` add capture-gated raw mouse input, indirect-pointer button/position handling, unlocked UIKit scroll events, pointer-lock cleanup and mouse-disconnect cleanup. iPhone Duo remains on its existing raw path.
+- The Windows shell's compact touch pad/keyboard dialog is not the full Swift touch-control guide/palette/custom keyboard. Use the original Xcode path for complete existing iPad UI parity; do not port/rewrite it in Objective-C.
+
+## Validated universal candidate
+
+- Source: `c3b1018` on `experiment/windows-native-ios27`.
+- Game-free template: `F:\FactoriOS\dist\FactoriOS-template-ios27-universal-external-pointer-c3b1018.ipa` (arm64/iOS SDK 27.2; package validation passed).
+- Private IPA: `F:\FactoriOS\dist\private-duo-ios27-universal-external-pointer-c3b1018\FactorioPad.ipa`.
+- IPA SHA-256: `b1a05f4a40576dfe714109cc9d77fcd5182b03014fc8c5f8f7292e49096b7b61`.
+- FactorioPad SHA-256: `f092e2b4f412c945403c8fc20927c744e61b01b0de0b89526c40c3ddd340f34b`.
+- FactorioGuest SHA-256 unchanged: `bc21ab31d38c73470f3a31c9be031eb8759577a04276e7ed4c94a7005527dffc`. FactorioCompat unchanged: `ff2d265a2e87cadb0b53c1c1b57368dd67fa786c3bcb598a87059091211f1829`.
+- Repack changed only app executable and Info.plist in the prior universal-metadata IPA. ZIP entries and permissions were preserved. Separate FactorioData was not accessed or copied.
+- Tests: platform boundary 4, Duo UX 6, upstream routing 4, external pointer routing 6 passed. `test_windows_native_ipa.py` passed on the game-free template. Full audit of the exact private IPA passed: 319 FactorioCompat strong/lazy bindings verified (160 through SDK-probed reexports), 564 native bindings checked, zero unverified imports.
+- Original Xcode build remains unverified here: required Apple-silicon Xcode 27 is unavailable on the Intel Tahoe VM.
 
 ## Next step
 
-Sign/install the new IPA on the physical Duo and validate unfolded landscape geometry, portrait upper/lower panel allocation, controller-aware touch controls, persistent keyboard access, and launcher behavior. See `docs/NEXT_CODEX_HANDOFF.md` for the detailed checklist. Do not replace the rollback IPA until device validation succeeds.
-
-## Boundaries and execution
-
-Work only on `experiment/windows-native-ios27`; preserve main, stable releases, FactorioData, saves, and the known-good rollback IPA. Keep reports untracked and private game artifacts out of GitHub. Continue through routine command, test, compile, linker, packaging, and audit failures by inspecting evidence, correcting the cause, and rerunning. Stop only for a genuine external dependency such as physical-device testing.
+Sign/install the new private IPA and physically test pointer capture, connect/release, cursor position/movement/clicks/scroll, physical keyboard, and controller behavior on iPad with and without an external monitor. Confirm actual screen geometry and whether iPadOS supplies a separate scene. Recheck Duo on this candidate before replacing its known-good installation; device behavior is not established by the host tests. Preserve all older IPAs.
