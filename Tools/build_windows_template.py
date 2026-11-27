@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse, json, os, pathlib, plistlib, shutil, struct, subprocess, sys, zipfile
 from datetime import datetime, timezone
+from patch_factorio import SHIM_FRAMEWORKS
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SDK = pathlib.Path(os.environ.get("FACTORIOS_IOS_SDK", r"F:\NXNative\1_Development\SDKs\Xcode_27.2\iPhoneOS.sdk"))
@@ -15,6 +16,11 @@ LD, READOBJ = LLVM / "ld64.lld.exe", LLVM / "llvm-readobj.exe"
 FRAMEWORKS = ["Foundation", "UIKit", "QuartzCore", "CoreGraphics", "CoreFoundation",
               "GameController", "Metal", "AudioToolbox", "CoreAudio", "CoreVideo",
               "Security", "IOKit", "MobileCoreServices", "AVFAudio"]
+# Keep the original upstream patcher's two-level dylib routing intact:
+# every native iOS framework whose macOS name is rewritten to FactorioCompat
+# MUST be reexported by FactorioCompat, unless the shim implements the export.
+# CoreServices is macOS-only; MobileCoreServices supplies its legacy UTType APIs.
+REEXPORT_FRAMEWORKS = set(FRAMEWORKS).intersection(SHIM_FRAMEWORKS) | {"MobileCoreServices"}
 
 
 def run(args: list[str], quiet: bool = False) -> str:
@@ -86,40 +92,35 @@ def verify_compat_runtime_exports(binary: pathlib.Path) -> None:
         pos += length
     if pos != end:
         raise RuntimeError("Malformed FactorioCompat load commands end")
-    # iOS stubs and ld64.lld may use the unversioned install name; macOS
-    # stubs can use /Versions/A/. Both refer to IOKit. Crucially, only a
-    # *reexport* command can satisfy imports bound to FactorioCompat via dyld.
-    def is_iokit_framework(path: str) -> bool:
-        parts = path.replace("\\", "/").split("/")
-        if len(parts) < 2 or parts[-1] != "IOKit":
-            return False
-        if parts[-2] == "IOKit.framework":
+    # Native frameworks must be genuine LC_REEXPORT_DYLIB commands.
+    # Ordinary LC_LOAD_DYLIB commands DO NOT make native iOS imports available
+    # to FactorioGuest when their original framework ordinal was rewritten
+    # to FactorioCompat by the upstream Mach-O guest patcher.
+    def is_framework_reexport(path: str, framework: str) -> bool:
+        parts = path.replace("\\\\", "/").split("/")
+        if len(parts) >= 2 and parts[-2:] == [framework + ".framework", framework]:
             return True
-        return (len(parts) >= 4 and parts[-4] == "IOKit.framework"
-                and parts[-3] == "Versions" and bool(parts[-2]))
-
-    def is_mobilecoreservices_framework(path: str) -> bool:
-        return bool(__import__("re").search(
-            r"/MobileCoreServices\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", path))
+        return (len(parts) >= 4 and
+                parts[-4:] == [framework + ".framework", "Versions",
+                               parts[-2], framework] and bool(parts[-2]))
 
     def is_libsystem(path: str) -> bool:
-        return bool(__import__("re").search(
-            r"/libSystem(?:\.B)?\.dylib$", path))
+        return path.endswith("/libSystem.B.dylib") or path.endswith("/libSystem.dylib")
 
     providers = {
-        "IOKit": any(is_iokit_framework(path) for path in reexports),
-        "MobileCoreServices": any(is_mobilecoreservices_framework(path) for path in reexports),
-        "libSystem": any(is_libsystem(path) for path in reexports),
+        framework: any(is_framework_reexport(path, framework) for path in reexports)
+        for framework in sorted(REEXPORT_FRAMEWORKS)
     }
-    missing_providers = [provider for provider, present in providers.items() if not present]
+    providers["libSystem"] = any(is_libsystem(path) for path in reexports)
+    missing_providers = [name for name, present in providers.items() if not present]
     if missing_providers:
         raise RuntimeError(
-            f"Native LC_REEXPORT_DYLIB missing: {missing_providers}; "
-            f"actual reexports: {reexports}; ordinary/weak loads: {ordinary_loads}. "
-            "LC_LOAD_DYLIB alone cannot satisfy guest symbols through FactorioCompat.")
+            f"Upstream guest routing requires missing native LC_REEXPORT_DYLIB providers: "
+            f"{missing_providers}; actual reexports: {reexports}; "
+            f"ordinary/weak loads: {ordinary_loads}")
 
-    print("validated FactorioCompat exports: NSColor, legacy UTType globals")
-    print("validated native IOKit, MobileCoreServices and libSystem reexports: "
+    print("validated FactorioCompat exports: NSColor, AppleEventManager, CoreGraphics and UTType globals")
+    print("validated upstream-compatible native LC_REEXPORT_DYLIB providers: "
           + ", ".join(reexports))
 
 
@@ -162,14 +163,13 @@ def build_compat() -> pathlib.Path:
             "-current_version", "2.3.0", "-compatibility_version", "1.0", "-undefined", "error",
             "-reexport-lSystem", "-lobjc"]
     for name in FRAMEWORKS:
-        # FactorioGuest's original macOS IOKit imports still bind to the
-        # FactorioCompat dylib. Reexport the real iOS IOKit API through that
-        # dylib while keeping local shims for unavailable macOS-only symbols
-        # (such as IODisplayCreateInfoDictionary). This preserves the guest's
-        # existing library ordinals; dyld can follow LC_REEXPORT_DYLIB.
-        # Legacy UTType C functions remain available in MobileCoreServices
-        # on iOS. Reexport that native provider rather than cloning the APIs.
-        args += ["-reexport_framework" if name in {"IOKit", "MobileCoreServices"} else "-framework", name]
+        # The upstream Factorio guest patcher rebinds macOS Foundation,
+        # CoreGraphics, CoreVideo, Metal, Security, CoreAudio, AudioToolbox
+        # and IOKit libraries to FactorioCompat. Those native iOS symbols
+        # must be visible through true reexports, while macOS-only symbols
+        # remain implemented by local compatibility shims.
+        option = "-reexport_framework" if name in REEXPORT_FRAMEWORKS else "-framework"
+        args += [option, name]
     run(args + ["-o", str(binary), *map(str, objects)])
     verify_macho(binary)
     verify_dependencies(binary)
