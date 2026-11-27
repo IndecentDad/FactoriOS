@@ -226,11 +226,34 @@ def verify_output(ipa_path: Path) -> tuple[str, str]:
                 capture_output=True, text=True, errors="replace", check=True).stdout
             if "Foundation.framework/Foundation" not in dependency_report:
                 raise RuntimeError("Guest lacks native Foundation dependency; stale patcher?")
+            # Device log 2026-11-27: the original guest tried to resolve
+            # _OBJC_CLASS_$_NSAppleEventManager from iOS Foundation.
+            # This macOS-only class is already implemented by FactorioCompat.
+            # Reject packages that preserve the wrong two-level dylib ordinal.
+            class_symbol = "_OBJC_CLASS_$_NSAppleEventManager"
+            bind_lines = []
+            for bind_flag in ("--bind", "--lazy-bind"):
+                binding_report = subprocess.run(
+                    [str(objdump), "--macho", bind_flag, str(guest_bin)],
+                    capture_output=True, text=True, errors="replace",
+                    check=True).stdout
+                bind_lines.extend(
+                    line.strip() for line in binding_report.splitlines()
+                    if line.strip().split()[-1:] == [class_symbol]
+                )
+            if not bind_lines or not all("FactorioCompat" in line for line in bind_lines):
+                raise RuntimeError(
+                    "NSAppleEventManager guest bindings do not exclusively target "
+                    f"FactorioCompat (instead of system Foundation): {bind_lines}")
             export_report = subprocess.run(
                 [str(nm), "--extern-only", "--defined-only", str(compat_bin)],
                 capture_output=True, text=True, errors="replace", check=True).stdout
-            if not any(line.split()[-1:] == ["_kUTTagClassMIMEType"] for line in export_report.splitlines()):
+            exports = {line.split()[-1] for line in export_report.splitlines() if line.split()}
+            if "_kUTTagClassMIMEType" not in exports:
                 raise RuntimeError("Packaged FactorioCompat does not export _kUTTagClassMIMEType")
+            if class_symbol not in exports:
+                raise RuntimeError("Packaged FactorioCompat does not export NSAppleEventManager runtime class")
+            print("NSAppleEventManager dyld ordinal confirmed: FactorioCompat")
             print("Native framework routing confirmed: Foundation -> Foundation.framework")
             print("Known missing compatibility symbol exported: _kUTTagClassMIMEType")
         return guest_sha, compat_sha
