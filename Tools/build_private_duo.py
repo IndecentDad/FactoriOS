@@ -92,6 +92,11 @@ def report_status(stage: str, state: str, tag: str, logfile: Path, **extra: obje
             previous = {}
     if previous.get("tag") != tag:
         previous = {}
+    # Stage transitions must not inherit terminal failure codes from an
+    # earlier attempt with the same tag. An audit-only rerun can pass while
+    # the old status otherwise continues displaying audit_exit_code=1.
+    for stale_failure_key in ("exit_code", "audit_exit_code", "error"):
+        previous.pop(stale_failure_key, None)
     payload = {
         **previous,
         "tag": tag,
@@ -323,7 +328,8 @@ def main() -> int:
                           audit_exit_code=audit.returncode)
             return 2
         report_status("audit-existing-ipa", "completed", tag, logfile, ipa=str(ipa))
-        print("FactorioCompat-scoped strong binding audit passed. Separate full guest/runtime verification remains required.", flush=True)
+        print("Full host-side FactorioCompat reexport and native-framework import audit passed.", flush=True)
+        print("This confirms no imports were left unverified by the audit; physical Duo launch remains untested.", flush=True)
         return 0
     dmgs = discover_dmgs()
     if args.inventory:
