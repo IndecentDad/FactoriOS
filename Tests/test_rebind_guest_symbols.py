@@ -10,11 +10,13 @@ import pathlib
 import struct
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "Tools"))
-from rebind_guest_symbols import rebind_macos_classes
+from rebind_guest_symbols import REBINDS, rebind_macos_classes
 
 SYMBOL = b"_OBJC_CLASS_$_NSAppleEventManager"
+CG_SYMBOL = b"_kCGDisplayShowDuplicateLowResolutionModes"
 
 
 def pad(data: bytes, alignment: int = 8) -> bytes:
@@ -38,17 +40,20 @@ def libs() -> list[bytes]:
     return [
         dylib("/System/Library/Frameworks/Foundation.framework/Foundation"),
         dylib("@rpath/FactorioCompat.framework/FactorioCompat"),
+        dylib("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"),
     ]
 
 
 def chained_fixture(fmt: int = 1, wrong_provider: bool = False,
                     missing_target: bool = False,
-                    corefoundation_first: bool = False) -> bytearray:
-    name = (b"_OBJC_CLASS_$_OtherClass" if missing_target else SYMBOL) + b"\0"
+                    corefoundation_first: bool = False,
+                    target_symbol: bytes = SYMBOL) -> bytearray:
+    name = (b"_OBJC_CLASS_$_OtherClass" if missing_target else target_symbol) + b"\0"
     stride = {1: 4, 2: 8, 3: 16}[fmt]
     blob = bytearray(28 + stride + len(name))
     struct.pack_into("<7I", blob, 0, 0, 0, 28, 28 + stride, 1, fmt, 0)
-    provider = 3 if wrong_provider else (2 if corefoundation_first else 1)
+    provider = 4 if wrong_provider else (2 if corefoundation_first else
+                                      3 if target_symbol == CG_SYMBOL else 1)
     if fmt == 3:
         struct.pack_into("<Qq", blob, 28, provider, -123)
     else:
@@ -78,7 +83,7 @@ def classic_fixture() -> bytearray:
     commands.append(info)
     prefix = header(commands)
     end = len(prefix)
-    linkedit_offset = 32 + sum(map(len, commands[:2]))
+    linkedit_offset = 32 + sum(map(len, libs()))
     dyld_offset = linkedit_offset + 72
     struct.pack_into("<QQ", prefix, linkedit_offset + 40, end, len(stream))
     struct.pack_into("<Q", prefix, linkedit_offset + 32, 0x4000)
@@ -87,6 +92,29 @@ def classic_fixture() -> bytearray:
 
 
 class RebindTests(unittest.TestCase):
+    def setUp(self):
+        # Single-symbol fixtures keep the legacy coverage independent;
+        # a separate test verifies CoreGraphics's own provider ordinal.
+        scope = patch.dict(REBINDS, {
+            SYMBOL.decode(): ("Foundation", "FactorioCompat"),
+        }, clear=True)
+        scope.start()
+        self.addCleanup(scope.stop)
+
+    def test_coregraphics_symbol_is_rebound_to_compat(self):
+        with patch.dict(REBINDS, {
+            CG_SYMBOL.decode(): ("CoreGraphics", "FactorioCompat"),
+        }, clear=True):
+            data = chained_fixture(target_symbol=CG_SYMBOL)
+            before = data[:]
+            result = rebind_macos_classes(data)
+            self.assertEqual(result, {CG_SYMBOL.decode(): 1})
+            cmd_offset = 32 + sum(map(len, libs()))
+            payload_offset = struct.unpack_from("<I", before, cmd_offset + 8)[0]
+            entry = payload_offset + 28
+            self.assertEqual(before[entry], 3)   # CoreGraphics
+            self.assertEqual(data[entry], 2)     # FactorioCompat
+
     def test_chained_short_import(self):
         data = chained_fixture(1)
         before = data[:]
