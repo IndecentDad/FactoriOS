@@ -105,6 +105,13 @@ PROVIDER_LINK_FLAGS = {
     "MobileCoreServices": ["-framework", "MobileCoreServices"],
     "CoreServices": ["-framework", "CoreServices"],
     "libSystem": ["-lSystem"],
+    # These are direct FactorioGuest native iOS imports, not libraries
+    # whose macOS dependency was rewritten to FactorioCompat. Keep them
+    # direct and validate their symbols against the genuine iPhoneOS SDK.
+    "AVFoundation": ["-framework", "AVFoundation"],
+    "CoreMedia": ["-framework", "CoreMedia"],
+    "UniformTypeIdentifiers": ["-framework", "UniformTypeIdentifiers"],
+    "libresolv": ["-lresolv"],
     # Frameworks that FactorioGuest binds directly to. Their original
     # macOS exports are not guaranteed to exist in the iPhoneOS SDK.
     "Foundation": ["-framework", "Foundation"],
