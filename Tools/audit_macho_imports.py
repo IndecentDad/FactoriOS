@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from patch_factorio import SHIM_FRAMEWORKS
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_IPA = ROOT / "dist" / "private-duo-test-2.1.24" / "FactorioPad.ipa"
@@ -102,6 +103,7 @@ def is_iokit_reexport(path: str) -> bool:
 PROVIDER_LINK_FLAGS = {
     "IOKit": ["-framework", "IOKit"],
     "MobileCoreServices": ["-framework", "MobileCoreServices"],
+    "CoreServices": ["-framework", "CoreServices"],
     "libSystem": ["-lSystem"],
     # Frameworks that FactorioGuest binds directly to. Their original
     # macOS exports are not guaranteed to exist in the iPhoneOS SDK.
@@ -361,18 +363,44 @@ def main() -> int:
         (args.report_dir / "compat-reexport-loads.txt").write_text(
             "\n".join(reexports) + ("\n" if reexports else ""),
             encoding="utf-8")
+        # Every native SDK framework that the original upstream guest
+        # patcher redirects to FactorioCompat must be checked as a real
+        # reexport. The former audit checked just IOKit/MobileCoreServices/
+        # libSystem, silently ignoring Foundation and CoreGraphics.
+        expected_frameworks = sorted(
+            SHIM_FRAMEWORKS.intersection(PROVIDER_LINK_FLAGS)
+            | {"MobileCoreServices"}
+        )
+        def framework_reexport_paths(provider: str) -> list[str]:
+            regex = re.compile(
+                r"/" + re.escape(provider)
+                + r"\.framework/(?:Versions/[^/]+/)?"
+                + re.escape(provider) + r"$")
+            return [path for path in reexports if regex.search(path)]
+
         provider_reexport_paths = {
-            "IOKit": [name for name in reexports if is_iokit_reexport(name)],
-            "MobileCoreServices": [name for name in reexports if
-                re.search(r"/MobileCoreServices\.framework/(?:Versions/[^/]+/)?MobileCoreServices$", name)],
-            "libSystem": [name for name in reexports if
-                re.search(r"/libSystem(?:\.B)?\.dylib$", name)],
+            name: framework_reexport_paths(name) for name in expected_frameworks
         }
+        provider_reexport_paths["libSystem"] = [
+            name for name in reexports
+            if re.search(r"/libSystem(?:\.B)?\.dylib$", name)
+        ]
+        # The extracted SDK may not include CoreServices.framework;
+        # MobileCoreServices supplies iOS legacy UTType exports instead.
+        if not provider_reexport_paths.get("CoreServices"):
+            provider_reexport_paths.pop("CoreServices", None)
         verified_by_provider: dict[str, dict[str, str]] = {}
         unverified_by_provider: dict[str, dict[str, str]] = {}
         outstanding = list(missing_direct)
-        for provider in ("IOKit", "MobileCoreServices", "libSystem"):
-            if not outstanding or not provider_reexport_paths[provider]:
+        # Prefer known provider order, then check all other original
+        # upstream shimmed native libraries. This covers Foundation,
+        # CoreGraphics, CoreVideo, Metal, Security, CoreAudio and AudioToolbox
+        # without assuming their SDK exports are direct FactorioCompat defs.
+        priority = ["IOKit", "MobileCoreServices", "CoreServices", "libSystem"]
+        ordered_providers = priority + sorted(
+            name for name in provider_reexport_paths if name not in priority)
+        for provider in ordered_providers:
+            if not outstanding or not provider_reexport_paths.get(provider):
                 continue
             verified, rejected = probe_provider_symbols(
                 outstanding, provider, args.sdk, args.llvm_bin, tempdir,
@@ -402,7 +430,7 @@ def main() -> int:
             "remaining_unverified_strong": genuine_remaining,
             "platform": f"arm64-apple-ios{MIN_IOS}",
             "sdk": str(args.sdk),
-            "warning": "This check does not prove runtime iOS symbol availability or audit guest bindings assigned directly to other system frameworks.",
+            "warning": "SDK link probes verify arm64/iOS export availability but cannot prove actual device runtime or image loading.",
         }
         (args.report_dir / "reexport-resolution.json").write_text(
             json.dumps(evidence, indent=2), encoding="utf-8")
