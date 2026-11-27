@@ -241,6 +241,7 @@ def package_template(binary: pathlib.Path, framework: pathlib.Path, output: path
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compat-only", action="store_true")
+    parser.add_argument("--verify-existing-compat", action="store_true", help="Validate the already linked FactorioCompat binary without recompiling")
     parser.add_argument("--output", type=pathlib.Path, default=ROOT / "dist" / "FactoriOS-template.ipa")
     args = parser.parse_args()
     actual = str(json.loads((SDK / "SDKSettings.json").read_text(encoding="utf-8")).get("Version", ""))
@@ -249,6 +250,15 @@ def main() -> int:
     if not all(p.exists() for p in (CLANG, CLANGXX, LD, READOBJ)):
         raise RuntimeError("LLVM 23 clang/clang++/ld64.lld/llvm-readobj are required")
     BUILD.mkdir(parents=True, exist_ok=True)
+    if args.verify_existing_compat:
+        binary = BUILD / "Product" / "FactorioCompat.framework" / "FactorioCompat"
+        if not binary.is_file():
+            raise FileNotFoundError(f"No existing compiled compatibility binary: {binary}")
+        verify_macho(binary)
+        verify_dependencies(binary)
+        verify_compat_runtime_exports(binary)
+        print(f"Verified existing FactorioCompat without recompiling: {binary}")
+        return 0
     framework = build_compat()
     if not args.compat_only:
         binary, framework = build_app()
