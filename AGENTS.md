@@ -42,22 +42,34 @@ not a final answer. An unsuccessful hypothesis is evidence to revise and retry.
 - Fix tooling errors (paths, shell quoting, imports, logging, metadata validation)
   yourself, just as you fix actual compatibility code.
 
-## Active dependency-resolution work
+## Active work: restore the previously working upstream Mach-O behavior
 
-The legacy direct-export audit counted 62 symbols as missing because it did not
-follow the verified LC_REEXPORT_DYLIB from FactorioCompat to native iOS IOKit.
-Its count is not proof of 62 unresolved strong imports.
+The user requested iPhone Duo display support, **not a new guest framework
+routing model**. The Windows experiment previously changed original upstream
+Tools/patch_factorio.py to route Foundation, CoreGraphics and five other macOS
+frameworks directly to iOS native libraries. That bypassed FactorioCompat and
+caused confirmed iPhone dyld failures for NSAppleEventManager and
+kCGDisplayShowDuplicateLowResolutionModes, both already implemented by the
+existing compatibility framework.
 
-- Tools/audit_macho_imports.py must distinguish direct exports, real reexports,
-  and genuinely unverified strong imports. Test SDK 27.2 iOS ARM64 symbols using
-  a linker probe, not just text matches in .tbd files.
-- Use the already produced private IPA for audit-only iterations. Do not
-  regenerate the guest unless the patcher or compatibility binary changed.
-- Resolve any remaining CoreServices/math imports by their original Mach-O
-  provider ordinals and correct C/Objective-C ABI.
-- Rebuild affected source, repackage private IPA without FactorioData, and run
-  complete host-side validation. Static checks cannot prove device/runtime
-  behavior: report device-only requirements separately and accurately.
+- Original upstream/main Tools/patch_factorio.py is now restored verbatim.
+  **Do not restore the broken Windows-native routing or invent more one-symbol
+  rebinding patches.** Preserve this original two-level guest dylib behavior.
+- Match FactorioCompat.xcconfig: reexport the original iOS native providers
+  through FactorioCompat using actual LC_REEXPORT_DYLIB commands. On Windows,
+  use MobileCoreServices for legacy CoreServices UTType exports; add
+  CoreServices when a linkable SDK stub is present.
+- Run Tests/test_upstream_framework_routing.py before expensive builds.
+  Use the original Factorio 2.1.24 DMG to repatch FactorioGuest after patcher
+  changes; an existing IPA retains its old broken dependency table.
+- Run the complete SDK 27.2 import audit including direct and reexported native
+  symbols and actual provider library ordinals. Do not call a narrow audit a
+  successful launch test.
+- Inspect prior failed audit reports yourself; fix genuine failures and
+  preserve device data. Compile/package a NEW private IPA only after these
+  routing and native export checks are accounted for.
+- Commit and PUSH meaningful fixes. Physical iPhone Duo launch remains the
+  final runtime proof. Never claim host static checks establish game startup.
 
 ## Reporting and stopping rules
 
